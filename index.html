@@ -943,22 +943,30 @@
                 <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerSaveProfile()">Save Settings</button>
                 <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerSaveProfileAs()">Save As Profile</button>
                 <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerLoadSelectedProfile()">Load Profile</button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerDuplicateSelectedProfile()">Duplicate Profile</button>
                 <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerDeleteSelectedProfile()">Delete Profile</button>
                 <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerExportProfile()">Export Settings</button>
                 <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerImportProfile()">Import Settings</button>
               </div>
 
               <div class="row g-2 align-items-end mb-2">
-                <div class="col-md-4">
+                <div class="col-md-3">
                   <label for="mqttProfileSelect" class="form-label mb-1">Profile</label>
                   <select id="mqttProfileSelect" class="form-select form-select-sm"></select>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
                   <label for="mqttProfileName" class="form-label mb-1">New profile name</label>
                   <input id="mqttProfileName" class="form-control form-control-sm" placeholder="e.g. Plant-A-Prod" />
                 </div>
-                <div class="col-md-4 d-flex align-items-center">
+                <div class="col-md-3 d-flex align-items-center">
                   <label class="mb-0"><input id="mqttExportIncludePassword" type="checkbox" /> Include password in export</label>
+                </div>
+                <div class="col-md-3">
+                  <label for="mqttImportConflictMode" class="form-label mb-1">Import conflict mode</label>
+                  <select id="mqttImportConflictMode" class="form-select form-select-sm">
+                    <option value="overwrite" selected>Overwrite existing profiles</option>
+                    <option value="rename">Rename imported profiles</option>
+                  </select>
                 </div>
               </div>
               <input id="mqttProfileFile" type="file" accept=".json,.mqtt-profile.json,application/json" style="display:none;" onchange="mqttExplorerHandleProfileFile(event)" />
