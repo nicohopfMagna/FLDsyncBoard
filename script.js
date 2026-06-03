@@ -4940,6 +4940,89 @@ function getLineShapePreview(shapeType) {
   };
   return map[shape] || map['I-shape'];
 }
+
+function getLineShapePreviewMarkup(shapeType) {
+  const shape = normalizeLineShapeType(shapeType);
+
+  let svgContent = '<path d="M10 20 L70 20"/>';
+  if (shape === 'L-shape') {
+    svgContent = '<path d="M14 8 V30 H66"/>';
+  } else if (shape === 'U-shape') {
+    svgContent = '<path d="M14 8 V30 H66 V8"/>';
+  } else if (shape === 'O-shape') {
+    svgContent = '<rect x="14" y="8" width="52" height="24" rx="8" ry="8"/>';
+  } else if (shape === 'S-shape') {
+    svgContent = '<path d="M14 11 H53 Q65 11 65 20 Q65 29 53 29 H14 M14 20 H43"/>';
+  } else if (shape === 'T-shape') {
+    svgContent = '<path d="M10 10 H70 M40 10 V32"/>';
+  } else if (shape === 'Cell-shape') {
+    svgContent = '<rect x="18" y="10" width="44" height="20" rx="3" ry="3"/><path d="M18 20 H62 M31 10 V30 M49 10 V30"/>';
+  }
+
+  return `
+    <span class="line-shape-pill">
+      <svg viewBox="0 0 80 40" width="62" height="24" aria-hidden="true">
+        <g fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+          ${svgContent}
+        </g>
+      </svg>
+      <span class="line-shape-label">${shape}</span>
+    </span>
+  `.trim();
+}
+
+function updateNewLineShapePreview(shapeType) {
+  const host = document.getElementById('newLineShapePreview');
+  if (!host) return;
+  host.innerHTML = getLineShapePreviewMarkup(shapeType);
+  const pill = host.querySelector('.line-shape-pill');
+  if (pill) {
+    pill.classList.remove('line-shape-pulse');
+    // Force reflow so the pulse reliably re-triggers on repeated selections.
+    void pill.offsetWidth;
+    pill.classList.add('line-shape-pulse');
+  }
+  animateLineShapePreviews();
+}
+
+function getLineShapeOptionLabel(shapeType) {
+  const shape = normalizeLineShapeType(shapeType);
+  const map = {
+    'I-shape': 'I  Straight',
+    'L-shape': 'L  Corner',
+    'U-shape': 'U  Return',
+    'O-shape': 'O  Loop',
+    'S-shape': 'S  Snake',
+    'T-shape': 'T  Junction',
+    'Cell-shape': '#  Cell'
+  };
+  return map[shape] || map['I-shape'];
+}
+
+function animateLineShapePreviews() {
+  if (!window.anime || typeof window.anime !== 'function') {
+    return;
+  }
+
+  const shapes = Array.from(document.querySelectorAll('#lineTable svg g > path, #lineTable svg g > rect'));
+  if (!shapes.length) {
+    return;
+  }
+
+  try {
+    window.anime.remove(shapes);
+    window.anime({
+      targets: shapes,
+      strokeDashoffset: [window.anime.setDashoffset, 0],
+      opacity: [0.2, 1],
+      easing: 'easeOutQuad',
+      duration: 650,
+      delay: window.anime.stagger(55)
+    });
+  } catch (_) {
+    // Animation is optional and should never block the core UI.
+  }
+}
 // ----------- 1. Stations --------
 function renderStations() {
     const table = document.getElementById('stationTable');
@@ -4993,6 +5076,8 @@ function renderStations() {
       ` : ""}
     </tbody>
   `;
+
+  animateLineShapePreviews();
 }
 function addStation() {
     const id = document.getElementById("sId").value.trim();
@@ -5063,10 +5148,10 @@ function renderLines() {
         : line.description}</td>
           <td>${linesEditMode
         ? `<select class="form-select form-select-sm" onchange="updateLineField(${idx},'shapeType',this.value)">
-                ${['I-shape','L-shape','U-shape','O-shape','S-shape','T-shape','Cell-shape'].map((shape) => `<option value="${shape}" ${(normalizeLineShapeType(line.shapeType) === shape) ? 'selected' : ''}>${shape}</option>`).join('')}
+                ${['I-shape','L-shape','U-shape','O-shape','S-shape','T-shape','Cell-shape'].map((shape) => `<option value="${shape}" ${(normalizeLineShapeType(line.shapeType) === shape) ? 'selected' : ''}>${getLineShapeOptionLabel(shape)}</option>`).join('')}
               </select>`
         : normalizeLineShapeType(line.shapeType)}</td>
-          <td><span class="badge bg-secondary">${getLineShapePreview(line.shapeType)}</span></td>
+          <td>${getLineShapePreviewMarkup(line.shapeType)}</td>
           <td>
             ${linesEditMode
           ? `<button class="btn btn-danger btn-sm" onclick="deleteLine('${line.id}')">${tr('deleteLabel')}</button>`
@@ -5079,11 +5164,11 @@ function renderLines() {
         <td><input id="lId" type="text" class="form-control form-control-sm"></td>
         <td><input id="lDesc" type="text" class="form-control form-control-sm"></td>
         <td>
-          <select id="lShape" class="form-select form-select-sm">
-            ${['I-shape','L-shape','U-shape','O-shape','S-shape','T-shape','Cell-shape'].map((shape) => `<option value="${shape}">${shape}</option>`).join('')}
+          <select id="lShape" class="form-select form-select-sm" onchange="updateNewLineShapePreview(this.value)">
+            ${['I-shape','L-shape','U-shape','O-shape','S-shape','T-shape','Cell-shape'].map((shape) => `<option value="${shape}">${getLineShapeOptionLabel(shape)}</option>`).join('')}
           </select>
         </td>
-        <td><span class="badge bg-secondary">${getLineShapePreview('I-shape')}</span></td>
+        <td id="newLineShapePreview">${getLineShapePreviewMarkup('I-shape')}</td>
         <td><button class="btn btn-primary btn-sm" onclick="addLine()">${tr('addLabel')}</button></td>
       </tr>
       ` : ""}
@@ -5104,6 +5189,7 @@ function addLine() {
     document.getElementById("lDesc").value = "";
     if (document.getElementById("lShape")) {
       document.getElementById("lShape").value = 'I-shape';
+      updateNewLineShapePreview('I-shape');
     }
 }
 function deleteLine(id) {
@@ -5116,6 +5202,7 @@ function updateLineField(idx, field, value) {
 window.addLine = addLine;
 window.deleteLine = deleteLine;
 window.updateLineField = updateLineField;
+window.updateNewLineShapePreview = updateNewLineShapePreview;
 window.showLines = () => { linesEditMode = false; renderLines(); };
 window.editLines = () => { linesEditMode = true; renderLines(); };
 window.saveLinesEdit = () => { linesEditMode = false; renderLines(); };

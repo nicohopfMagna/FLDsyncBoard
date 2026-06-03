@@ -443,6 +443,81 @@
       border-radius: 0.55rem;
       padding: 0.45rem 0.55rem;
     }
+    .line-shape-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid color-mix(in srgb, var(--panel-border) 70%, var(--accent-cyan) 30%);
+      background: color-mix(in srgb, var(--panel-bg) 88%, var(--accent-cyan) 12%);
+      color: var(--accent-cyan);
+      transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+      will-change: transform, box-shadow;
+    }
+    .line-shape-pill:hover {
+      transform: translateY(-1px);
+      border-color: color-mix(in srgb, var(--accent-cyan) 65%, var(--panel-border) 35%);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-cyan) 38%, transparent), 0 0 18px color-mix(in srgb, var(--accent-cyan) 30%, transparent);
+    }
+    .line-shape-pill.line-shape-pulse {
+      animation: lineShapePulse 520ms ease-out;
+    }
+    .line-shape-pill svg {
+      display: block;
+      filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent-cyan) 26%, transparent));
+    }
+    .line-shape-label {
+      font-size: 0.76rem;
+      white-space: nowrap;
+      color: var(--accent-grey);
+    }
+    @keyframes lineShapePulse {
+      0% {
+        transform: scale(0.98);
+        box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-cyan) 46%, transparent);
+      }
+      45% {
+        transform: scale(1.03);
+        box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent-cyan) 18%, transparent);
+      }
+      100% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-cyan) 0%, transparent);
+      }
+    }
+    .mes-collapsible {
+      border: 1px dashed color-mix(in srgb, var(--panel-border) 72%, var(--accent-cyan) 28%);
+      border-radius: 0.55rem;
+      padding: 0.35rem 0.5rem 0.5rem;
+      margin-bottom: 0.6rem;
+      position: relative;
+      z-index: 1;
+    }
+    .mes-collapsible > summary {
+      cursor: pointer;
+      color: var(--accent-grey);
+      font-size: 0.86rem;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+      list-style: none;
+      outline: none;
+      user-select: none;
+    }
+    .mes-collapsible > summary::-webkit-details-marker {
+      display: none;
+    }
+    .mes-collapsible > summary::before {
+      content: '▸';
+      margin-right: 0.38rem;
+      color: var(--accent-cyan);
+    }
+    .mes-collapsible[open] > summary::before {
+      content: '▾';
+    }
+    .mes-collapsible-body {
+      margin-top: 0.45rem;
+    }
     @media (min-width: 1200px) {
       .mes-workbench {
         grid-template-columns: minmax(0, 0.96fr) minmax(0, 1.04fr);
@@ -472,6 +547,7 @@
   <script src="https://alcdn.msauth.net/browser/2.39.0/js/msal-browser.min.js"></script>
   <script src="xlsx.full.min.js"></script>
   <script src="FileSaver.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/animejs@3.2.2/lib/anime.min.js"></script>
   <script src="script.js?v=20260602-1"></script>
 </head>
 <body>
@@ -867,116 +943,131 @@
           </div>
 
           <div class="mes-subgrid">
-            <div>
-              <div class="row g-2 align-items-end mb-2">
-                <div class="col-md-6">
-                  <label for="mqttHost" class="form-label mb-1">Host</label>
-                  <input id="mqttHost" class="form-control form-control-sm" placeholder="broker.example.com" />
-                </div>
-                <div class="col-md-2">
-                  <label for="mqttPort" class="form-label mb-1">Port</label>
-                  <input id="mqttPort" class="form-control form-control-sm" value="8883" />
-                </div>
-                <div class="col-md-4">
-                  <label for="mqttProtocol" class="form-label mb-1">Protocol</label>
-                  <select id="mqttProtocol" class="form-select form-select-sm">
-                    <option value="mqtts">mqtts</option>
-                    <option value="mqtt">mqtt</option>
-                    <option value="wss">wss</option>
-                    <option value="ws">ws</option>
-                  </select>
-                </div>
-                <div class="col-md-6">
-                  <label for="mqttClientId" class="form-label mb-1">Client ID</label>
-                  <input id="mqttClientId" class="form-control form-control-sm" placeholder="optional" />
-                </div>
-                <div class="col-md-3">
-                  <label for="mqttUsername" class="form-label mb-1">Username</label>
-                  <input id="mqttUsername" class="form-control form-control-sm" placeholder="optional" />
-                </div>
-                <div class="col-md-3">
-                  <label for="mqttPassword" class="form-label mb-1">Password</label>
-                  <input id="mqttPassword" type="password" class="form-control form-control-sm" placeholder="optional" />
-                </div>
-              </div>
+            <div class="span-all">
+              <details class="mes-collapsible">
+                <summary>Broker Settings / Login</summary>
+                <div class="mes-collapsible-body">
+                  <div class="row g-2 align-items-end mb-2">
+                    <div class="col-md-6">
+                      <label for="mqttHost" class="form-label mb-1">Host</label>
+                      <input id="mqttHost" class="form-control form-control-sm" placeholder="broker.example.com" />
+                    </div>
+                    <div class="col-md-2">
+                      <label for="mqttPort" class="form-label mb-1">Port</label>
+                      <input id="mqttPort" class="form-control form-control-sm" value="8883" />
+                    </div>
+                    <div class="col-md-4">
+                      <label for="mqttProtocol" class="form-label mb-1">Protocol</label>
+                      <select id="mqttProtocol" class="form-select form-select-sm">
+                        <option value="mqtts">mqtts</option>
+                        <option value="mqtt">mqtt</option>
+                        <option value="wss">wss</option>
+                        <option value="ws">ws</option>
+                      </select>
+                    </div>
+                    <div class="col-md-6">
+                      <label for="mqttClientId" class="form-label mb-1">Client ID</label>
+                      <input id="mqttClientId" class="form-control form-control-sm" placeholder="optional" />
+                    </div>
+                    <div class="col-md-3">
+                      <label for="mqttUsername" class="form-label mb-1">Username</label>
+                      <input id="mqttUsername" class="form-control form-control-sm" placeholder="optional" />
+                    </div>
+                    <div class="col-md-3">
+                      <label for="mqttPassword" class="form-label mb-1">Password</label>
+                      <input id="mqttPassword" type="password" class="form-control form-control-sm" placeholder="optional" />
+                    </div>
+                  </div>
 
-              <div class="row g-2 align-items-end mb-2">
-                <div class="col-md-4">
-                  <label for="mqttKeepalive" class="form-label mb-1">Keepalive (sec)</label>
-                  <input id="mqttKeepalive" class="form-control form-control-sm" value="60" />
-                </div>
-                <div class="col-md-4">
-                  <label for="mqttConnectTimeout" class="form-label mb-1">Connect Timeout (ms)</label>
-                  <input id="mqttConnectTimeout" class="form-control form-control-sm" value="10000" />
-                </div>
-                <div class="col-md-4">
-                  <label for="mqttReconnectPeriod" class="form-label mb-1">Reconnect (ms)</label>
-                  <input id="mqttReconnectPeriod" class="form-control form-control-sm" value="1000" />
-                </div>
-                <div class="col-md-6 d-flex align-items-center">
-                  <label class="mb-0"><input id="mqttClean" type="checkbox" checked /> Clean session</label>
-                </div>
-                <div class="col-md-6 d-flex align-items-center">
-                  <label class="mb-0"><input id="mqttRejectUnauthorized" type="checkbox" checked /> Verify TLS cert</label>
-                </div>
-              </div>
+                  <div class="row g-2 align-items-end mb-2">
+                    <div class="col-md-4">
+                      <label for="mqttKeepalive" class="form-label mb-1">Keepalive (sec)</label>
+                      <input id="mqttKeepalive" class="form-control form-control-sm" value="60" />
+                    </div>
+                    <div class="col-md-4">
+                      <label for="mqttConnectTimeout" class="form-label mb-1">Connect Timeout (ms)</label>
+                      <input id="mqttConnectTimeout" class="form-control form-control-sm" value="10000" />
+                    </div>
+                    <div class="col-md-4">
+                      <label for="mqttReconnectPeriod" class="form-label mb-1">Reconnect (ms)</label>
+                      <input id="mqttReconnectPeriod" class="form-control form-control-sm" value="1000" />
+                    </div>
+                    <div class="col-md-6 d-flex align-items-center">
+                      <label class="mb-0"><input id="mqttClean" type="checkbox" checked /> Clean session</label>
+                    </div>
+                    <div class="col-md-6 d-flex align-items-center">
+                      <label class="mb-0"><input id="mqttRejectUnauthorized" type="checkbox" checked /> Verify TLS cert</label>
+                    </div>
+                  </div>
 
-              <div class="mes-toolbar">
-                <button class="btn btn-outline-success btn-sm" onclick="mqttExplorerConnect()">Connect</button>
-                <button class="btn btn-outline-danger btn-sm" onclick="mqttExplorerDisconnect()">Disconnect</button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerRefreshStatus()">Refresh Status</button>
-              </div>
+                  <div class="mes-toolbar">
+                    <button class="btn btn-outline-success btn-sm" onclick="mqttExplorerConnect()">Connect</button>
+                    <button class="btn btn-outline-danger btn-sm" onclick="mqttExplorerDisconnect()">Disconnect</button>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerRefreshStatus()">Refresh Status</button>
+                  </div>
 
-              <div class="mb-2">
-                <label for="mqttCaPem" class="form-label mb-1">CA PEM (optional)</label>
-                <textarea id="mqttCaPem" class="form-control form-control-sm" rows="3" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
-                <input id="mqttCaPemFile" type="file" accept=".pem" style="display:none;" onchange="mqttExplorerHandleCaPemFile(event)" />
-                <div class="mes-toolbar mt-2">
-                  <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerImportCaPem()">Import Cert</button>
-                  <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerLoadMagnaPem()">Load magna_global_fullchain.pem</button>
-                  <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerExportCaPem()">Export Cert</button>
-                </div>
-                <div class="mes-status" style="font-size:0.85rem; margin-top: 4px;">Recommended certificate file: magna_global_fullchain.pem</div>
-              </div>
+                  <details class="mes-collapsible">
+                    <summary>Profile Tools</summary>
+                    <div class="mes-collapsible-body">
+                      <div class="row g-2 align-items-end mb-2">
+                        <div class="col-md-3">
+                          <label for="mqttProfileSelect" class="form-label mb-1">Profile</label>
+                          <select id="mqttProfileSelect" class="form-select form-select-sm"></select>
+                        </div>
+                        <div class="col-md-3">
+                          <label for="mqttProfileName" class="form-label mb-1">New profile name</label>
+                          <input id="mqttProfileName" class="form-control form-control-sm" placeholder="e.g. Plant-A-Prod" />
+                        </div>
+                        <div class="col-md-3 d-flex align-items-center">
+                          <label class="mb-0"><input id="mqttExportIncludePassword" type="checkbox" /> Include password in export</label>
+                        </div>
+                        <div class="col-md-3">
+                          <label for="mqttImportConflictMode" class="form-label mb-1">Import conflict mode</label>
+                          <select id="mqttImportConflictMode" class="form-select form-select-sm">
+                            <option value="overwrite" selected>Overwrite existing profiles</option>
+                            <option value="rename">Rename imported profiles</option>
+                          </select>
+                        </div>
+                      </div>
 
-              <div class="mes-toolbar">
-                <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerSaveProfile()">Save Settings</button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerSaveProfileAs()">Save As Profile</button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerLoadSelectedProfile()">Load Profile</button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerDuplicateSelectedProfile()">Duplicate Profile</button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerDeleteSelectedProfile()">Delete Profile</button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerExportProfile()">Export Settings</button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerImportProfile()">Import Settings</button>
-              </div>
+                      <div class="mes-toolbar">
+                        <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerSaveProfile()">Save Settings</button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerSaveProfileAs()">Save As Profile</button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerLoadSelectedProfile()">Load Profile</button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerDuplicateSelectedProfile()">Duplicate Profile</button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerDeleteSelectedProfile()">Delete Profile</button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerExportProfile()">Export Settings</button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerImportProfile()">Import Settings</button>
+                      </div>
+                    </div>
+                  </details>
 
-              <div class="row g-2 align-items-end mb-2">
-                <div class="col-md-3">
-                  <label for="mqttProfileSelect" class="form-label mb-1">Profile</label>
-                  <select id="mqttProfileSelect" class="form-select form-select-sm"></select>
+                  <details class="mes-collapsible">
+                    <summary>TLS Certificate Tools</summary>
+                    <div class="mes-collapsible-body">
+                      <div class="mb-2">
+                        <label for="mqttCaPem" class="form-label mb-1">CA PEM (optional)</label>
+                        <textarea id="mqttCaPem" class="form-control form-control-sm" rows="3" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+                        <input id="mqttCaPemFile" type="file" accept=".pem" style="display:none;" onchange="mqttExplorerHandleCaPemFile(event)" />
+                        <div class="mes-toolbar mt-2">
+                          <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerImportCaPem()">Import Cert</button>
+                          <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerLoadMagnaPem()">Load magna_global_fullchain.pem</button>
+                          <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerExportCaPem()">Export Cert</button>
+                        </div>
+                        <div class="mes-status" style="font-size:0.85rem; margin-top: 4px;">Recommended certificate file: magna_global_fullchain.pem</div>
+                      </div>
+                    </div>
+                  </details>
                 </div>
-                <div class="col-md-3">
-                  <label for="mqttProfileName" class="form-label mb-1">New profile name</label>
-                  <input id="mqttProfileName" class="form-control form-control-sm" placeholder="e.g. Plant-A-Prod" />
-                </div>
-                <div class="col-md-3 d-flex align-items-center">
-                  <label class="mb-0"><input id="mqttExportIncludePassword" type="checkbox" /> Include password in export</label>
-                </div>
-                <div class="col-md-3">
-                  <label for="mqttImportConflictMode" class="form-label mb-1">Import conflict mode</label>
-                  <select id="mqttImportConflictMode" class="form-select form-select-sm">
-                    <option value="overwrite" selected>Overwrite existing profiles</option>
-                    <option value="rename">Rename imported profiles</option>
-                  </select>
-                </div>
-              </div>
+              </details>
               <input id="mqttProfileFile" type="file" accept=".json,.mqtt-profile.json,application/json" style="display:none;" onchange="mqttExplorerHandleProfileFile(event)" />
             </div>
 
-            <div>
+            <div class="span-all">
               <div class="row g-2 align-items-end mb-2">
-                <div class="col-md-7">
+                <div class="col-md-10">
                   <label for="mqttTopic" class="form-label mb-1">Topic</label>
-                  <input id="mqttTopic" class="form-control form-control-sm" placeholder="factory/line/#" />
+                  <input id="mqttTopic" class="form-control form-control-sm" placeholder="factory/line/very/long/topic/path/#" />
                 </div>
                 <div class="col-md-2">
                   <label for="mqttQos" class="form-label mb-1">QoS</label>
@@ -986,7 +1077,7 @@
                     <option value="2">2</option>
                   </select>
                 </div>
-                <div class="col-md-3 d-flex align-items-center">
+                <div class="col-md-12 d-flex align-items-center">
                   <label class="mb-0"><input id="mqttRetain" type="checkbox" /> Retain</label>
                 </div>
               </div>
@@ -994,11 +1085,13 @@
               <div class="mes-toolbar">
                 <button class="btn btn-outline-primary btn-sm" onclick="mqttExplorerSubscribe()">Subscribe</button>
                 <button class="btn btn-outline-warning btn-sm" onclick="mqttExplorerUnsubscribe()">Unsubscribe</button>
+                <button class="btn btn-primary btn-sm" onclick="mqttExplorerPublish()">Publish</button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerLoadMessages()">Load Messages</button>
               </div>
 
               <div class="mb-2">
-                <label for="mqttPayload" class="form-label mb-1">Payload</label>
-                <textarea id="mqttPayload" class="form-control form-control-sm" rows="4" placeholder="Plain text or JSON"></textarea>
+                <label for="mqttPayload" class="form-label mb-1">Payload (JSON)</label>
+                <textarea id="mqttPayload" class="form-control form-control-sm" rows="10" placeholder="{&#10;  &quot;stationId&quot;: &quot;ST-1001&quot;,&#10;  &quot;event&quot;: &quot;RUN&quot;&#10;}"></textarea>
               </div>
 
               <div class="row g-2 align-items-end mb-2">
@@ -1017,11 +1110,17 @@
 
               <div class="mes-toolbar">
                 <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerAddPayloadVariable()">Add Variable</button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerClearPayloadVariables()">Clear Vars</button>
-                <button class="btn btn-primary btn-sm" onclick="mqttExplorerPublish()">Publish</button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerLoadMessages()">Load Messages</button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerClearMessages()">Clear Messages</button>
               </div>
+
+              <details class="mes-collapsible">
+                <summary>Additional Message Actions</summary>
+                <div class="mes-collapsible-body">
+                  <div class="mes-toolbar mb-0">
+                    <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerClearPayloadVariables()">Clear Vars</button>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="mqttExplorerClearMessages()">Clear Messages</button>
+                  </div>
+                </div>
+              </details>
 
               <div id="mqttPayloadVariables" class="mes-status mb-2" style="font-size: 0.92rem;"></div>
               <div id="mqttExplorerStatus" class="mes-status mb-2"></div>
