@@ -3144,7 +3144,9 @@ const API_CATALOG = [
     requiredOutputKeys: ['Version', 'Timestamp', 'ShiftSchedule'],
     inputs: [
       { name: 'stationId', label: 'Station ID', location: 'query', required: false, recommendationKey: 'stationId' },
-      { name: 'lineId', label: 'Line ID', location: 'query', required: false, recommendationKey: 'lineId' }
+      { name: 'lineId', label: 'Line ID', location: 'query', required: false, recommendationKey: 'lineId' },
+      { name: 'fromLocal', label: 'From (local, -1 = default)', location: 'query', required: false },
+      { name: 'toLocal', label: 'To (local, -1 = now)', location: 'query', required: false }
     ]
   },
   {
@@ -3159,7 +3161,9 @@ const API_CATALOG = [
     requiredOutputKeys: ['Version', 'Timestamp', 'BreakSchedule'],
     inputs: [
       { name: 'stationId', label: 'Station ID', location: 'query', required: false, recommendationKey: 'stationId' },
-      { name: 'lineId', label: 'Line ID', location: 'query', required: false, recommendationKey: 'lineId' }
+      { name: 'lineId', label: 'Line ID', location: 'query', required: false, recommendationKey: 'lineId' },
+      { name: 'fromLocal', label: 'From (local, -1 = default)', location: 'query', required: false },
+      { name: 'toLocal', label: 'To (local, -1 = now)', location: 'query', required: false }
     ]
   },
   {
@@ -3586,6 +3590,20 @@ function renderApiCatalogInputs() {
   inputsHost.innerHTML = selectedInputs.map((input) => {
     const id = `apiCatalogInput_${input.name}`;
     const requiredMark = input.required ? ' *' : '';
+
+    if (input.name === 'fromLocal' || input.name === 'toLocal') {
+      return `
+        <div class="col-md-6">
+          <label class="form-label mb-1" for="${id}_mode">${input.label}${requiredMark}</label>
+          <select id="${id}_mode" class="form-select form-select-sm mb-1">
+            <option value="default" selected>-1 (default)</option>
+            <option value="custom">Custom date/time</option>
+          </select>
+          <input id="${id}" class="form-control form-control-sm" type="datetime-local" style="display:none;">
+        </div>
+      `;
+    }
+
     if (input.type === 'select' && Array.isArray(input.options)) {
       return `
         <div class="col-md-6">
@@ -3633,10 +3651,31 @@ function renderApiCatalogInputs() {
     return `
       <div class="col-md-6">
         <label class="form-label mb-1" for="${id}">${input.label}${requiredMark}</label>
-        <input id="${id}" class="form-control form-control-sm" ${input.type === 'number' ? 'type="number"' : 'type="text"'}>
+        <input id="${id}" class="form-control form-control-sm" ${input.type === 'number' ? 'type="number"' : 'type="text"'} value="${input.name === 'fromLocal' ? '-1' : (input.name === 'toLocal' ? '-1' : '')}">
       </div>
     `;
   }).join('');
+
+  selectedInputs.forEach((input) => {
+    if (input.name !== 'fromLocal' && input.name !== 'toLocal') return;
+
+    const baseId = `apiCatalogInput_${input.name}`;
+    const modeEl = document.getElementById(`${baseId}_mode`);
+    const dateEl = document.getElementById(baseId);
+    if (!modeEl || !dateEl) return;
+
+    const syncMode = () => {
+      const isCustom = modeEl.value === 'custom';
+      dateEl.style.display = isCustom ? '' : 'none';
+      dateEl.disabled = !isCustom;
+      if (!isCustom) {
+        dateEl.value = '';
+      }
+    };
+
+    modeEl.onchange = syncMode;
+    syncMode();
+  });
 
   if (entry.id === 'contract-get-shift-schedule' || entry.id === 'uns-shift-schedule' || entry.id === 'uns-cycle-time') {
     const typeEl = document.getElementById('apiCatalogInput_targetType');
@@ -3665,7 +3704,14 @@ function buildApiCatalogRequest(entry) {
 
   for (const input of selectedInputs) {
     const el = document.getElementById(`apiCatalogInput_${input.name}`);
-    const raw = el ? String(el.value || '').trim() : '';
+    let raw = el ? String(el.value || '').trim() : '';
+
+    if (input.name === 'fromLocal' || input.name === 'toLocal') {
+      const modeEl = document.getElementById(`apiCatalogInput_${input.name}_mode`);
+      if (modeEl && modeEl.value !== 'custom') {
+        raw = '-1';
+      }
+    }
 
     if (input.required && !raw) {
       throw new Error(`Missing required input: ${input.label}`);
@@ -4004,6 +4050,228 @@ window.runSystemHealthCheck = async function() {
 
 let mqttExplorerPollTimer = null;
 const mqttPayloadVariables = new Map();
+const MQTT_EXPLORER_PROFILE_STORAGE_KEY = 'fld-syncboard-mqtt-profile-v1';
+const MQTT_EXPLORER_PROFILE_COLLECTION_STORAGE_KEY = 'fld-syncboard-mqtt-profiles-v1';
+
+function mqttExplorerBuildProfile(options = {}) {
+  const includeSecrets = options.includeSecrets === true;
+  return {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    connection: {
+      host: String(document.getElementById('mqttHost')?.value || '').trim(),
+      port: Number(document.getElementById('mqttPort')?.value || 0),
+      protocol: String(document.getElementById('mqttProtocol')?.value || 'mqtts').trim(),
+      clientId: String(document.getElementById('mqttClientId')?.value || '').trim(),
+      username: String(document.getElementById('mqttUsername')?.value || '').trim(),
+      password: includeSecrets ? String(document.getElementById('mqttPassword')?.value || '') : '',
+      keepalive: Number(document.getElementById('mqttKeepalive')?.value || 60),
+      connectTimeout: Number(document.getElementById('mqttConnectTimeout')?.value || 10000),
+      reconnectPeriod: Number(document.getElementById('mqttReconnectPeriod')?.value || 1000),
+      clean: document.getElementById('mqttClean')?.checked !== false,
+      rejectUnauthorized: document.getElementById('mqttRejectUnauthorized')?.checked !== false,
+      caPem: String(document.getElementById('mqttCaPem')?.value || '')
+    },
+    topicSettings: {
+      topic: String(document.getElementById('mqttTopic')?.value || '').trim(),
+      qos: Number(document.getElementById('mqttQos')?.value || 0),
+      retain: document.getElementById('mqttRetain')?.checked === true
+    },
+    payloadSettings: {
+      payload: String(document.getElementById('mqttPayload')?.value || ''),
+      parseAsJson: document.getElementById('mqttPublishAsJson')?.checked !== false,
+      variables: Array.from(mqttPayloadVariables.entries()).map(([key, value]) => ({ key, value }))
+    },
+    metadata: {
+      secretsIncluded: includeSecrets
+    }
+  };
+}
+
+function mqttExplorerReadProfileCollection() {
+  try {
+    const raw = localStorage.getItem(MQTT_EXPLORER_PROFILE_COLLECTION_STORAGE_KEY);
+    if (!raw) return { selectedName: 'default', profiles: {} };
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return { selectedName: 'default', profiles: {} };
+    const selectedName = String(parsed.selectedName || 'default').trim() || 'default';
+    const profiles = parsed.profiles && typeof parsed.profiles === 'object' ? parsed.profiles : {};
+    return { selectedName, profiles };
+  } catch (_) {
+    return { selectedName: 'default', profiles: {} };
+  }
+}
+
+function mqttExplorerWriteProfileCollection(collection) {
+  const selectedName = String(collection?.selectedName || 'default').trim() || 'default';
+  const profiles = collection?.profiles && typeof collection.profiles === 'object' ? collection.profiles : {};
+  localStorage.setItem(
+    MQTT_EXPLORER_PROFILE_COLLECTION_STORAGE_KEY,
+    JSON.stringify({ selectedName, profiles })
+  );
+}
+
+function mqttExplorerNormalizeProfileName(value) {
+  return String(value || '').trim();
+}
+
+function mqttExplorerGetSelectedProfileName() {
+  const select = document.getElementById('mqttProfileSelect');
+  const selected = mqttExplorerNormalizeProfileName(select?.value || 'default');
+  return selected || 'default';
+}
+
+function mqttExplorerRefreshProfileCatalog() {
+  const select = document.getElementById('mqttProfileSelect');
+  if (!select) return;
+
+  const collection = mqttExplorerReadProfileCollection();
+  const names = Object.keys(collection.profiles || {});
+  if (!names.includes('default')) names.unshift('default');
+
+  select.innerHTML = names
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`)
+    .join('');
+
+  const selected = names.includes(collection.selectedName) ? collection.selectedName : names[0] || 'default';
+  select.value = selected;
+}
+
+function mqttExplorerSaveNamedProfile(name, options = {}) {
+  const profileName = mqttExplorerNormalizeProfileName(name) || 'default';
+  const includeSecrets = options.includeSecrets !== false;
+  const collection = mqttExplorerReadProfileCollection();
+  collection.profiles[profileName] = mqttExplorerBuildProfile({ includeSecrets });
+  collection.selectedName = profileName;
+  mqttExplorerWriteProfileCollection(collection);
+  localStorage.setItem(MQTT_EXPLORER_PROFILE_STORAGE_KEY, JSON.stringify(collection.profiles[profileName]));
+  mqttExplorerRefreshProfileCatalog();
+}
+
+function mqttExplorerGetImportConflictMode() {
+  const mode = String(document.getElementById('mqttImportConflictMode')?.value || 'overwrite').trim().toLowerCase();
+  return mode === 'rename' ? 'rename' : 'overwrite';
+}
+
+function mqttExplorerResolveImportedProfileName(rawName, profiles, mode) {
+  const baseName = mqttExplorerNormalizeProfileName(rawName) || 'imported-profile';
+  if (mode !== 'rename') {
+    return baseName;
+  }
+
+  const taken = new Set(Object.keys(profiles || {}));
+  if (!taken.has(baseName)) {
+    return baseName;
+  }
+
+  let suffix = 2;
+  while (taken.has(`${baseName}-${suffix}`)) {
+    suffix += 1;
+  }
+  return `${baseName}-${suffix}`;
+}
+
+function mqttExplorerEnsureProfileCollectionInitialized() {
+  const collection = mqttExplorerReadProfileCollection();
+  const hasAnyProfiles = Object.keys(collection.profiles || {}).length > 0;
+  if (hasAnyProfiles) return;
+
+  let fallbackProfile = null;
+  try {
+    const legacy = localStorage.getItem(MQTT_EXPLORER_PROFILE_STORAGE_KEY);
+    if (legacy) {
+      const parsed = JSON.parse(legacy);
+      if (parsed && typeof parsed === 'object') {
+        fallbackProfile = parsed;
+      }
+    }
+  } catch (_) {
+    fallbackProfile = null;
+  }
+
+  const nextCollection = {
+    selectedName: 'default',
+    profiles: {
+      default: fallbackProfile || mqttExplorerBuildProfile({ includeSecrets: true })
+    }
+  };
+  mqttExplorerWriteProfileCollection(nextCollection);
+}
+
+function mqttExplorerApplyProfile(profile) {
+  if (!profile || typeof profile !== 'object') {
+    throw new Error('Invalid MQTT profile format');
+  }
+
+  const connection = profile.connection || {};
+  const topicSettings = profile.topicSettings || {};
+  const payloadSettings = profile.payloadSettings || {};
+
+  const setValue = (id, value) => {
+    const el = document.getElementById(id);
+    if (!el || value == null) return;
+    el.value = String(value);
+  };
+  const setChecked = (id, value) => {
+    const el = document.getElementById(id);
+    if (!el || typeof value !== 'boolean') return;
+    el.checked = value;
+  };
+
+  setValue('mqttHost', connection.host);
+  setValue('mqttPort', connection.port);
+  setValue('mqttProtocol', connection.protocol);
+  setValue('mqttClientId', connection.clientId);
+  setValue('mqttUsername', connection.username);
+  setValue('mqttPassword', connection.password);
+  setValue('mqttKeepalive', connection.keepalive);
+  setValue('mqttConnectTimeout', connection.connectTimeout);
+  setValue('mqttReconnectPeriod', connection.reconnectPeriod);
+  setChecked('mqttClean', connection.clean);
+  setChecked('mqttRejectUnauthorized', connection.rejectUnauthorized);
+  setValue('mqttCaPem', connection.caPem);
+
+  setValue('mqttTopic', topicSettings.topic);
+  setValue('mqttQos', topicSettings.qos);
+  setChecked('mqttRetain', topicSettings.retain);
+
+  setValue('mqttPayload', payloadSettings.payload);
+  setChecked('mqttPublishAsJson', payloadSettings.parseAsJson);
+
+  mqttPayloadVariables.clear();
+  if (Array.isArray(payloadSettings.variables)) {
+    payloadSettings.variables.forEach((item) => {
+      const key = String(item?.key || '').trim();
+      if (!key) return;
+      mqttPayloadVariables.set(key, String(item?.value || ''));
+    });
+  }
+  mqttExplorerRenderVariables();
+}
+
+function mqttExplorerPersistProfileToStorage() {
+  try {
+    const selectedName = mqttExplorerGetSelectedProfileName();
+    mqttExplorerSaveNamedProfile(selectedName, { includeSecrets: true });
+  } catch (_) {
+    // Ignore local persistence failures in private mode or restricted browsers.
+  }
+}
+
+function mqttExplorerLoadProfileFromStorage() {
+  try {
+    mqttExplorerEnsureProfileCollectionInitialized();
+    mqttExplorerRefreshProfileCatalog();
+    const collection = mqttExplorerReadProfileCollection();
+    const selectedName = mqttExplorerNormalizeProfileName(collection.selectedName) || 'default';
+    const parsed = collection.profiles[selectedName] || collection.profiles.default || null;
+    if (!parsed) return;
+    mqttExplorerApplyProfile(parsed);
+  } catch (_) {
+    // Ignore invalid local storage content.
+  }
+}
 
 function mqttExplorerSetStatus(message, isError = false) {
   const el = document.getElementById('mqttExplorerStatus');
@@ -4144,6 +4412,7 @@ window.mqttExplorerRefreshStatus = async function() {
 window.mqttExplorerConnect = async function() {
   try {
     const config = mqttExplorerReadConfig();
+    mqttExplorerPersistProfileToStorage();
     await fetchJsonWithFriendlyErrors('/api/mqtt-explorer/connect', 'MQTT connect failed.', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4175,6 +4444,7 @@ window.mqttExplorerSubscribe = async function() {
     const topic = String(document.getElementById('mqttTopic')?.value || '').trim();
     const qos = Number(document.getElementById('mqttQos')?.value || 0);
     if (!topic) throw new Error('Topic is required for subscribe');
+    mqttExplorerPersistProfileToStorage();
     await fetchJsonWithFriendlyErrors('/api/mqtt-explorer/subscribe', 'MQTT subscribe failed.', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4191,6 +4461,7 @@ window.mqttExplorerUnsubscribe = async function() {
   try {
     const topic = String(document.getElementById('mqttTopic')?.value || '').trim();
     if (!topic) throw new Error('Topic is required for unsubscribe');
+    mqttExplorerPersistProfileToStorage();
     await fetchJsonWithFriendlyErrors('/api/mqtt-explorer/unsubscribe', 'MQTT unsubscribe failed.', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4211,6 +4482,7 @@ window.mqttExplorerPublish = async function() {
     if (!topic) throw new Error('Topic is required for publish');
 
     const payload = mqttExplorerNormalizePayload();
+    mqttExplorerPersistProfileToStorage();
     await fetchJsonWithFriendlyErrors('/api/mqtt-explorer/publish', 'MQTT publish failed.', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4249,13 +4521,205 @@ window.mqttExplorerAddPayloadVariable = function() {
   }
   mqttPayloadVariables.set(key, value);
   mqttExplorerRenderVariables();
+  mqttExplorerPersistProfileToStorage();
   mqttExplorerSetStatus(`Variable set: ${key}`);
 };
 
 window.mqttExplorerClearPayloadVariables = function() {
   mqttPayloadVariables.clear();
   mqttExplorerRenderVariables();
+  mqttExplorerPersistProfileToStorage();
   mqttExplorerSetStatus('Payload variables cleared.');
+};
+
+window.mqttExplorerSaveProfile = function() {
+  try {
+    const selectedName = mqttExplorerGetSelectedProfileName();
+    mqttExplorerSaveNamedProfile(selectedName, { includeSecrets: true });
+    mqttExplorerSetStatus(`MQTT settings saved to profile: ${selectedName}`);
+  } catch (err) {
+    mqttExplorerSetStatus(err?.message || 'Saving MQTT settings failed.', true);
+  }
+};
+
+window.mqttExplorerSaveProfileAs = function() {
+  try {
+    const nameInput = document.getElementById('mqttProfileName');
+    const profileName = mqttExplorerNormalizeProfileName(nameInput?.value || '');
+    if (!profileName) {
+      mqttExplorerSetStatus('Please enter a profile name.', true);
+      return;
+    }
+    mqttExplorerSaveNamedProfile(profileName, { includeSecrets: true });
+    mqttExplorerSetStatus(`MQTT settings saved as profile: ${profileName}`);
+  } catch (err) {
+    mqttExplorerSetStatus(err?.message || 'Saving MQTT profile failed.', true);
+  }
+};
+
+window.mqttExplorerLoadSelectedProfile = function() {
+  try {
+    const selectedName = mqttExplorerGetSelectedProfileName();
+    const collection = mqttExplorerReadProfileCollection();
+    const profile = collection.profiles[selectedName];
+    if (!profile) {
+      mqttExplorerSetStatus(`Profile not found: ${selectedName}`, true);
+      return;
+    }
+    mqttExplorerApplyProfile(profile);
+    collection.selectedName = selectedName;
+    mqttExplorerWriteProfileCollection(collection);
+    localStorage.setItem(MQTT_EXPLORER_PROFILE_STORAGE_KEY, JSON.stringify(profile));
+    mqttExplorerSetStatus(`MQTT profile loaded: ${selectedName}`);
+  } catch (err) {
+    mqttExplorerSetStatus(err?.message || 'Loading MQTT profile failed.', true);
+  }
+};
+
+window.mqttExplorerDuplicateSelectedProfile = function() {
+  try {
+    const selectedName = mqttExplorerGetSelectedProfileName();
+    const collection = mqttExplorerReadProfileCollection();
+    const sourceProfile = collection.profiles[selectedName];
+    if (!sourceProfile) {
+      mqttExplorerSetStatus(`Profile not found: ${selectedName}`, true);
+      return;
+    }
+
+    const preferredName = mqttExplorerNormalizeProfileName(document.getElementById('mqttProfileName')?.value || '')
+      || `${selectedName}-copy`;
+    const targetName = mqttExplorerResolveImportedProfileName(preferredName, collection.profiles, 'rename');
+
+    collection.profiles[targetName] = JSON.parse(JSON.stringify(sourceProfile));
+    collection.selectedName = targetName;
+    mqttExplorerWriteProfileCollection(collection);
+    localStorage.setItem(MQTT_EXPLORER_PROFILE_STORAGE_KEY, JSON.stringify(collection.profiles[targetName]));
+    mqttExplorerRefreshProfileCatalog();
+    mqttExplorerSetStatus(`MQTT profile duplicated: ${selectedName} -> ${targetName}`);
+  } catch (err) {
+    mqttExplorerSetStatus(err?.message || 'Duplicating MQTT profile failed.', true);
+  }
+};
+
+window.mqttExplorerDeleteSelectedProfile = function() {
+  try {
+    const selectedName = mqttExplorerGetSelectedProfileName();
+    if (selectedName === 'default') {
+      mqttExplorerSetStatus('Default profile cannot be deleted.', true);
+      return;
+    }
+
+    const collection = mqttExplorerReadProfileCollection();
+    if (!collection.profiles[selectedName]) {
+      mqttExplorerSetStatus(`Profile not found: ${selectedName}`, true);
+      return;
+    }
+
+    delete collection.profiles[selectedName];
+    collection.selectedName = 'default';
+    mqttExplorerWriteProfileCollection(collection);
+    mqttExplorerRefreshProfileCatalog();
+    mqttExplorerSetStatus(`MQTT profile deleted: ${selectedName}`);
+  } catch (err) {
+    mqttExplorerSetStatus(err?.message || 'Deleting MQTT profile failed.', true);
+  }
+};
+
+window.mqttExplorerExportProfile = function() {
+  try {
+    const includePassword = document.getElementById('mqttExportIncludePassword')?.checked === true;
+    const profileName = mqttExplorerGetSelectedProfileName();
+    const profile = mqttExplorerBuildProfile({ includeSecrets: includePassword });
+    const blob = new Blob([JSON.stringify(profile, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${profileName || 'mqtt'}-topic-payload-settings.mqtt-profile.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    mqttExplorerSetStatus(
+      `MQTT settings exported (${includePassword ? 'with password' : 'without password'}).`
+    );
+  } catch (err) {
+    mqttExplorerSetStatus(err?.message || 'Exporting MQTT settings failed.', true);
+  }
+};
+
+window.mqttExplorerImportProfile = function() {
+  const fileInput = document.getElementById('mqttProfileFile');
+  if (!fileInput) {
+    mqttExplorerSetStatus('Settings import control not found.', true);
+    return;
+  }
+  fileInput.click();
+};
+
+window.mqttExplorerHandleProfileFile = function(event) {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const text = String(reader.result || '');
+      const parsed = JSON.parse(text);
+      const profileNameBase = String(file.name || 'imported-profile').replace(/\.[^.]+$/, '').trim() || 'imported-profile';
+      const collection = mqttExplorerReadProfileCollection();
+      const conflictMode = mqttExplorerGetImportConflictMode();
+
+      if (parsed && typeof parsed === 'object' && parsed.profiles && typeof parsed.profiles === 'object') {
+        let importedCount = 0;
+        let renamedCount = 0;
+        let overwrittenCount = 0;
+        const importedNameMap = {};
+
+        Object.keys(parsed.profiles).forEach((name) => {
+          const normalized = mqttExplorerNormalizeProfileName(name);
+          if (!normalized) return;
+          const targetName = mqttExplorerResolveImportedProfileName(normalized, collection.profiles, conflictMode);
+          if (collection.profiles[targetName]) {
+            overwrittenCount += 1;
+          }
+          if (targetName !== normalized) {
+            renamedCount += 1;
+          }
+          collection.profiles[targetName] = parsed.profiles[name];
+          importedNameMap[normalized] = targetName;
+          importedCount += 1;
+        });
+
+        const importedSelectedRaw = mqttExplorerNormalizeProfileName(parsed.selectedName);
+        const importedSelectedResolved = importedSelectedRaw ? importedNameMap[importedSelectedRaw] || '' : '';
+        collection.selectedName = importedSelectedResolved || collection.selectedName || 'default';
+        mqttExplorerWriteProfileCollection(collection);
+        mqttExplorerRefreshProfileCatalog();
+        window.mqttExplorerLoadSelectedProfile();
+        mqttExplorerSetStatus(
+          `MQTT profile set imported: ${file.name} (${importedCount} profiles, ${overwrittenCount} overwritten, ${renamedCount} renamed)`
+        );
+      } else {
+        mqttExplorerApplyProfile(parsed);
+        const importedName = mqttExplorerResolveImportedProfileName(profileNameBase, collection.profiles, conflictMode);
+        mqttExplorerSaveNamedProfile(importedName, { includeSecrets: true });
+        mqttExplorerSetStatus(
+          `MQTT settings imported as profile: ${importedName}${importedName !== profileNameBase ? ` (renamed from ${profileNameBase})` : ''}`
+        );
+      }
+    } catch (err) {
+      mqttExplorerSetStatus(err?.message || 'Importing MQTT settings failed.', true);
+    }
+  };
+
+  reader.onerror = () => {
+    mqttExplorerSetStatus('Reading MQTT settings file failed.', true);
+  };
+
+  reader.readAsText(file);
+  if (event?.target) {
+    event.target.value = '';
+  }
 };
 
 window.mqttExplorerImportCaPem = function() {
@@ -4476,6 +4940,89 @@ function getLineShapePreview(shapeType) {
   };
   return map[shape] || map['I-shape'];
 }
+
+function getLineShapePreviewMarkup(shapeType) {
+  const shape = normalizeLineShapeType(shapeType);
+
+  let svgContent = '<path d="M10 20 L70 20"/>';
+  if (shape === 'L-shape') {
+    svgContent = '<path d="M14 8 V30 H66"/>';
+  } else if (shape === 'U-shape') {
+    svgContent = '<path d="M14 8 V30 H66 V8"/>';
+  } else if (shape === 'O-shape') {
+    svgContent = '<rect x="14" y="8" width="52" height="24" rx="8" ry="8"/>';
+  } else if (shape === 'S-shape') {
+    svgContent = '<path d="M14 11 H53 Q65 11 65 20 Q65 29 53 29 H14 M14 20 H43"/>';
+  } else if (shape === 'T-shape') {
+    svgContent = '<path d="M10 10 H70 M40 10 V32"/>';
+  } else if (shape === 'Cell-shape') {
+    svgContent = '<rect x="18" y="10" width="44" height="20" rx="3" ry="3"/><path d="M18 20 H62 M31 10 V30 M49 10 V30"/>';
+  }
+
+  return `
+    <span class="line-shape-pill">
+      <svg viewBox="0 0 80 40" width="62" height="24" aria-hidden="true">
+        <g fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+          ${svgContent}
+        </g>
+      </svg>
+      <span class="line-shape-label">${shape}</span>
+    </span>
+  `.trim();
+}
+
+function updateNewLineShapePreview(shapeType) {
+  const host = document.getElementById('newLineShapePreview');
+  if (!host) return;
+  host.innerHTML = getLineShapePreviewMarkup(shapeType);
+  const pill = host.querySelector('.line-shape-pill');
+  if (pill) {
+    pill.classList.remove('line-shape-pulse');
+    // Force reflow so the pulse reliably re-triggers on repeated selections.
+    void pill.offsetWidth;
+    pill.classList.add('line-shape-pulse');
+  }
+  animateLineShapePreviews();
+}
+
+function getLineShapeOptionLabel(shapeType) {
+  const shape = normalizeLineShapeType(shapeType);
+  const map = {
+    'I-shape': 'I  Straight',
+    'L-shape': 'L  Corner',
+    'U-shape': 'U  Return',
+    'O-shape': 'O  Loop',
+    'S-shape': 'S  Snake',
+    'T-shape': 'T  Junction',
+    'Cell-shape': '#  Cell'
+  };
+  return map[shape] || map['I-shape'];
+}
+
+function animateLineShapePreviews() {
+  if (!window.anime || typeof window.anime !== 'function') {
+    return;
+  }
+
+  const shapes = Array.from(document.querySelectorAll('#lineTable svg g > path, #lineTable svg g > rect'));
+  if (!shapes.length) {
+    return;
+  }
+
+  try {
+    window.anime.remove(shapes);
+    window.anime({
+      targets: shapes,
+      strokeDashoffset: [window.anime.setDashoffset, 0],
+      opacity: [0.2, 1],
+      easing: 'easeOutQuad',
+      duration: 650,
+      delay: window.anime.stagger(55)
+    });
+  } catch (_) {
+    // Animation is optional and should never block the core UI.
+  }
+}
 // ----------- 1. Stations --------
 function renderStations() {
     const table = document.getElementById('stationTable');
@@ -4529,6 +5076,8 @@ function renderStations() {
       ` : ""}
     </tbody>
   `;
+
+  animateLineShapePreviews();
 }
 function addStation() {
     const id = document.getElementById("sId").value.trim();
@@ -4599,10 +5148,10 @@ function renderLines() {
         : line.description}</td>
           <td>${linesEditMode
         ? `<select class="form-select form-select-sm" onchange="updateLineField(${idx},'shapeType',this.value)">
-                ${['I-shape','L-shape','U-shape','O-shape','S-shape','T-shape','Cell-shape'].map((shape) => `<option value="${shape}" ${(normalizeLineShapeType(line.shapeType) === shape) ? 'selected' : ''}>${shape}</option>`).join('')}
+                ${['I-shape','L-shape','U-shape','O-shape','S-shape','T-shape','Cell-shape'].map((shape) => `<option value="${shape}" ${(normalizeLineShapeType(line.shapeType) === shape) ? 'selected' : ''}>${getLineShapeOptionLabel(shape)}</option>`).join('')}
               </select>`
         : normalizeLineShapeType(line.shapeType)}</td>
-          <td><span class="badge bg-secondary">${getLineShapePreview(line.shapeType)}</span></td>
+          <td>${getLineShapePreviewMarkup(line.shapeType)}</td>
           <td>
             ${linesEditMode
           ? `<button class="btn btn-danger btn-sm" onclick="deleteLine('${line.id}')">${tr('deleteLabel')}</button>`
@@ -4615,11 +5164,11 @@ function renderLines() {
         <td><input id="lId" type="text" class="form-control form-control-sm"></td>
         <td><input id="lDesc" type="text" class="form-control form-control-sm"></td>
         <td>
-          <select id="lShape" class="form-select form-select-sm">
-            ${['I-shape','L-shape','U-shape','O-shape','S-shape','T-shape','Cell-shape'].map((shape) => `<option value="${shape}">${shape}</option>`).join('')}
+          <select id="lShape" class="form-select form-select-sm" onchange="updateNewLineShapePreview(this.value)">
+            ${['I-shape','L-shape','U-shape','O-shape','S-shape','T-shape','Cell-shape'].map((shape) => `<option value="${shape}">${getLineShapeOptionLabel(shape)}</option>`).join('')}
           </select>
         </td>
-        <td><span class="badge bg-secondary">${getLineShapePreview('I-shape')}</span></td>
+        <td id="newLineShapePreview">${getLineShapePreviewMarkup('I-shape')}</td>
         <td><button class="btn btn-primary btn-sm" onclick="addLine()">${tr('addLabel')}</button></td>
       </tr>
       ` : ""}
@@ -4640,6 +5189,7 @@ function addLine() {
     document.getElementById("lDesc").value = "";
     if (document.getElementById("lShape")) {
       document.getElementById("lShape").value = 'I-shape';
+      updateNewLineShapePreview('I-shape');
     }
 }
 function deleteLine(id) {
@@ -4652,6 +5202,7 @@ function updateLineField(idx, field, value) {
 window.addLine = addLine;
 window.deleteLine = deleteLine;
 window.updateLineField = updateLineField;
+window.updateNewLineShapePreview = updateNewLineShapePreview;
 window.showLines = () => { linesEditMode = false; renderLines(); };
 window.editLines = () => { linesEditMode = true; renderLines(); };
 window.saveLinesEdit = () => { linesEditMode = false; renderLines(); };
@@ -6235,6 +6786,8 @@ window.onload = () => {
   initTheme();
   currentLang = getLanguage();
   syncAuthInputs();
+  mqttExplorerEnsureProfileCollectionInitialized();
+  mqttExplorerLoadProfileFromStorage();
 
   const authProviderInput = document.getElementById('headerAuthProviderInput');
   if (authProviderInput) {
@@ -6264,7 +6817,17 @@ window.onload = () => {
   renderAssignedShiftSchedules();
   populateApiCatalogUI();
   mqttExplorerRenderVariables();
+  mqttExplorerPersistProfileToStorage();
   mqttExplorerRefreshStatus();
+
+  const mqttProfileSelect = document.getElementById('mqttProfileSelect');
+  if (mqttProfileSelect) {
+    mqttProfileSelect.addEventListener('change', () => {
+      const collection = mqttExplorerReadProfileCollection();
+      collection.selectedName = mqttExplorerGetSelectedProfileName();
+      mqttExplorerWriteProfileCollection(collection);
+    });
+  }
   if (loadPlantOptions) {
     loadPlantOptions()
       .then(() => {
