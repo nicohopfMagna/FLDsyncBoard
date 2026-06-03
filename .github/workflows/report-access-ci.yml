@@ -1,0 +1,133 @@
+name: Report Access CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      strict_sql_login:
+        description: Require SQL report login to exist and authenticate
+        type: boolean
+        default: false
+
+jobs:
+  report-access-default:
+    runs-on: windows-latest
+    if: ${{ vars.CI_ENABLE_REPORT_ACCESS == 'true' || github.event_name == 'workflow_dispatch' }}
+    env:
+      MSSQL_SERVER: ${{ vars.MSSQL_SERVER }}
+      MSSQL_DATABASE: ${{ vars.MSSQL_DATABASE }}
+      SQL_REPORT_USER: ${{ vars.SQL_REPORT_USER }}
+      SQL_REPORT_PASSWORD: ${{ secrets.SQL_REPORT_PASSWORD }}
+      API_REPORT_USER: ${{ vars.API_REPORT_USER }}
+      API_REPORT_PASSWORD: ${{ secrets.API_REPORT_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Preflight SQL config
+        id: preflight
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:MSSQL_SERVER) -or [string]::IsNullOrWhiteSpace($env:MSSQL_DATABASE)) {
+            "run_checks=false" >> $env:GITHUB_OUTPUT
+            Write-Host "Skipping report access CI: MSSQL_SERVER/MSSQL_DATABASE are not configured."
+            exit 0
+          }
+          "run_checks=true" >> $env:GITHUB_OUTPUT
+
+      - name: Run report access checks (optional SQL login)
+        if: steps.preflight.outputs.run_checks == 'true'
+        run: npm run ci:report-access
+
+      - name: Write summary (default checks executed)
+        if: steps.preflight.outputs.run_checks == 'true'
+        shell: pwsh
+        run: |
+          "## Report Access CI Summary" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          "- Mode: default (API/view strict, SQL login optional)" >> $env:GITHUB_STEP_SUMMARY
+          "- Result: checks executed" >> $env:GITHUB_STEP_SUMMARY
+          "- SQL server: $env:MSSQL_SERVER" >> $env:GITHUB_STEP_SUMMARY
+          "- SQL database: $env:MSSQL_DATABASE" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Report skipped checks
+        if: steps.preflight.outputs.run_checks != 'true'
+        shell: pwsh
+        run: |
+          Write-Host "Report access checks skipped because SQL connection variables are missing."
+          "## Report Access CI Summary" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          "- Mode: default (API/view strict, SQL login optional)" >> $env:GITHUB_STEP_SUMMARY
+          "- Result: skipped" >> $env:GITHUB_STEP_SUMMARY
+          "- Reason: MSSQL_SERVER and/or MSSQL_DATABASE are not configured" >> $env:GITHUB_STEP_SUMMARY
+
+  report-access-strict-protected:
+    runs-on: windows-latest
+    if: ${{ (vars.CI_ENABLE_REPORT_ACCESS == 'true' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || (github.event_name == 'workflow_dispatch' && inputs.strict_sql_login == true) }}
+    env:
+      MSSQL_SERVER: ${{ vars.MSSQL_SERVER }}
+      MSSQL_DATABASE: ${{ vars.MSSQL_DATABASE }}
+      SQL_REPORT_USER: ${{ vars.SQL_REPORT_USER }}
+      SQL_REPORT_PASSWORD: ${{ secrets.SQL_REPORT_PASSWORD }}
+      API_REPORT_USER: ${{ vars.API_REPORT_USER }}
+      API_REPORT_PASSWORD: ${{ secrets.API_REPORT_PASSWORD }}
+      SQL_REPORT_LOGIN_REQUIRED: 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Preflight SQL config
+        id: preflight
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:MSSQL_SERVER) -or [string]::IsNullOrWhiteSpace($env:MSSQL_DATABASE)) {
+            "run_checks=false" >> $env:GITHUB_OUTPUT
+            Write-Host "Skipping strict report access CI: MSSQL_SERVER/MSSQL_DATABASE are not configured."
+            exit 0
+          }
+          "run_checks=true" >> $env:GITHUB_OUTPUT
+
+      - name: Run report access checks (strict SQL login)
+        if: steps.preflight.outputs.run_checks == 'true'
+        run: npm run ci:report-access:strict-sql
+
+      - name: Write summary (strict checks executed)
+        if: steps.preflight.outputs.run_checks == 'true'
+        shell: pwsh
+        run: |
+          "## Report Access CI Summary" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          "- Mode: strict SQL login required" >> $env:GITHUB_STEP_SUMMARY
+          "- Result: checks executed" >> $env:GITHUB_STEP_SUMMARY
+          "- SQL server: $env:MSSQL_SERVER" >> $env:GITHUB_STEP_SUMMARY
+          "- SQL database: $env:MSSQL_DATABASE" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Report skipped checks
+        if: steps.preflight.outputs.run_checks != 'true'
+        shell: pwsh
+        run: |
+          Write-Host "Strict report access checks skipped because SQL connection variables are missing."
+          "## Report Access CI Summary" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          "- Mode: strict SQL login required" >> $env:GITHUB_STEP_SUMMARY
+          "- Result: skipped" >> $env:GITHUB_STEP_SUMMARY
+          "- Reason: MSSQL_SERVER and/or MSSQL_DATABASE are not configured" >> $env:GITHUB_STEP_SUMMARY

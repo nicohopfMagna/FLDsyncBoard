@@ -1,0 +1,18 @@
+ID,Description,Productive
+IMP_TE_SHIFT_1,Shift 1 Production,1
+IMP_TE_SHIFT_2,Shift 2 Production,1
+IMP_TE_SHIFT_3,Shift 3 Production,1
+IMP_TE_SHIFT_4,Shift 4 Production,1
+IMP_TE_QA,In-Process Quality Check,0
+IMP_TE_SETUP,Setup and Changeover,0
+IMP_TE_BREAK,Planned Break,0
+IMP_TE_MEETING,Team Meeting,0
+IMP_TE_HOLD,Material Shortage Hold,0
+IMP_TE_MAINT,Planned Maintenance,0
+IMP_TE_REPAIR,Unplanned Repair,0
+IMP_TE_CLEAN,Cleaning and 5S,0
+IMP_TE_STARTUP,Line Startup Delay,0
+IMP_TE_SHUTDOWN,Line Shutdown and Handover,0
+IMP_TE_LOGI,Internal Logistics Delay,0
+IMP_TE_IT,IT System Outage,0
+IMP_TE_SAFETY,Safety Stop,0

@@ -1,0 +1,8 @@
+node_modules/
+*.log
+npm-debug.log*
+.env
+.env.prod
+.env.postgres
+.env.prod.postgres
+.tmp_export_check/

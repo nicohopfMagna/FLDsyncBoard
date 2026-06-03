@@ -1,0 +1,6 @@
+Weekday,Shift Name,Start,End,Duration,Productive,Time Event
+"Shift Modell Name: IMP_MODEL_A",,,,,,
+Monday,Shift-1,06:00,12:00,360 min,1,IMP_TE_SHIFT_1
+Monday,Shift-2,12:00,18:00,360 min,1,IMP_TE_SHIFT_2
+Monday,Shift-3,18:00,00:00,360 min,1,IMP_TE_SHIFT_3
+Tuesday,Shift-4,00:00,06:00,360 min,1,IMP_TE_SHIFT_4

@@ -1,0 +1,35 @@
+{
+    "scripts": {
+        "start": "node server.js",
+        "docs:sync": "node scripts/sync-docs.js",
+        "docs:check": "node scripts/sync-docs.js --check",
+        "test:integration": "npm run test:integration:clean",
+        "test:integration:isolated": "start-server-and-test \"node scripts/start-test-server.js\" http://localhost:3100 \"node scripts/run-integration-on-test-port.js\"",
+        "test:integration:clean": "set APP_PORT=3100&& node scripts/clean-start-check.js --force-kill && npm run test:integration:isolated",
+        "check:health": "node scripts/check-health.js",
+        "check:health:verbose": "node scripts/check-health.js --verbose",
+        "start:check": "node scripts/clean-start-check.js",
+        "start:clean": "npm run start:check && npm run start",
+        "verify:report-access": "node scripts/verify-report-access.js",
+        "verify:report-access:strict": "node scripts/verify-report-access.js --strict",
+        "verify:report-access:with-start": "start-server-and-test start http://localhost:3000 \"node scripts/verify-report-access.js\"",
+        "verify:report-access:strict:with-start": "start-server-and-test start http://localhost:3000 \"node scripts/verify-report-access.js --strict\"",
+        "ci:report-access": "node scripts/run-report-access-ci.js",
+        "ci:report-access:strict-sql": "node scripts/run-report-access-ci.js --require-sql-login"
+    },
+    "devDependencies": {
+        "start-server-and-test": "^2.1.2"
+    },
+    "dependencies": {
+        "@azure/msal-node": "^5.2.2",
+        "express": "^5.2.1",
+        "jsonwebtoken": "^9.0.2",
+        "jwks-rsa": "^3.2.0",
+        "mqtt": "^5.15.1",
+        "mssql": "^12.5.4",
+        "pg": "^8.13.1"
+    },
+    "optionalDependencies": {
+        "msnodesqlv8": "^5.1.1"
+    }
+}

@@ -1,0 +1,3 @@
+Station ID,Description,Bottleneck,Cycle Time (s)
+IMP_ST_A,Import Station A,1,50
+IMP_ST_B,Import Station B,0,30
