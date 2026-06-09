@@ -6,3 +6,6 @@ npm-debug.log*
 .env.postgres
 .env.prod.postgres
 .tmp_export_check/
+reports/perf/*.json
+reports/perf/*.md
+!reports/perf/.gitkeep

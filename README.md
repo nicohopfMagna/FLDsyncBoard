@@ -172,11 +172,64 @@ Primary endpoints using this contract:
    - Strict job runs on protected branches (`main`/`master`) and can be forced via workflow_dispatch input `strict_sql_login=true`.
 - SQL login strictness can be toggled with `SQL_REPORT_LOGIN_REQUIRED=true`.
 
+## API Latency Benchmark (Performance Bundle)
+- Run local benchmark and create JSON/Markdown report files:
+   - `npm run perf:api-latency`
+- Run benchmark while auto-starting the server:
+   - `npm run perf:api-latency:with-start`
+- Recommended baseline run:
+   - `node scripts/api-latency-report.js baseline 20`
+- Recommended comparison run against a baseline file:
+   - `node scripts/api-latency-report.js current 20 --compare reports/perf/<baseline-file>.json`
+
+The script writes reports to `reports/perf/` and measures these API endpoints:
+- `/api/fld/cycle-time-v1`
+- `/api/fld/metadata-line-v1`
+- `/api/fld/shift-schedule-v1`
+- `/api/shift-schedule`
+- `/api/uns/cycle-time`
+
+The benchmark uses temporary `PERF_*` records and cleans them up after each run.
+
+### Thresholds and Warning Mode
+- Add a p95 budget (milliseconds):
+   - `node scripts/api-latency-report.js current 20 --p95-budget-ms 25`
+- Optional strict mode (fails command on p95 budget breach):
+   - `node scripts/api-latency-report.js current 20 --p95-budget-ms 25 --strict-threshold`
+
+If a p95 budget is provided, the report includes a threshold breach table with per-endpoint delta.
+
+### Optional CI Job
+- Workflow file: `.github/workflows/api-latency-report.yml`
+- Default behavior: non-blocking (`continue-on-error: true`) reporting job.
+- Enabled on push/PR only when `CI_ENABLE_API_LATENCY=true` is set in repository variables.
+- Always available via manual dispatch (`workflow_dispatch`) with inputs:
+   - `iterations`
+   - `p95_budget_ms`
+   - `strict_threshold`
+
+Reports are uploaded as a workflow artifact named `api-latency-reports`.
+
 ## Reporting Access
-- API report user (default): username `report`, password `report`
+- API report user (default fallback): username `report`, password `report`
+- Current recommended report user in env profiles: `FLDSyncboardReport`
 - Environment override (API login): `API_REPORT_USER`, `API_REPORT_PASSWORD`
+- Optional report alias migration: `API_REPORT_USER_ALIASES` (for example `report`)
 - Environment override (SQL login): `SQL_REPORT_USER`, `SQL_REPORT_PASSWORD`
+- MSSQL alias env keys are also supported: `MSSQL_REPORT_USER`, `MSSQL_REPORT_PASSWORD`
 - Strict SQL login requirement for verification scripts: `SQL_REPORT_LOGIN_REQUIRED=true`
+
+## Local Role Defaults (Current Stage)
+- `admin`: admin role with full permissions
+- `serviceUserFLDNoderedDEN`: admin role with full permissions
+- `FLDSyncboardReport`: user role with `masterdata.read`, `system.health`, `api.catalog.test`
+- Optional legacy alias `report` can map to the same report password when configured via `API_REPORT_USER_ALIASES`.
+
+Recommended hardening flags for production profiles:
+- `API_AUTH_ALLOW_LEGACY=false`
+- `API_ENFORCE_DEFAULT_ROLE_PERMISSIONS=false`
+- `API_ENFORCE_DEFAULT_CREDENTIALS=false`
+- `API_ENFORCE_REPORT_DEFAULTS=false`
 
 Startup always provisions report view grants via role `report_view_readers` and attempts SQL login/user provisioning for `SQL_REPORT_USER`.
 If SQL Server permissions do not allow login/user creation, startup keeps role grants and logs `sql.report_user.login_path.skipped` as a non-fatal warning.

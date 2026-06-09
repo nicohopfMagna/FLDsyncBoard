@@ -1,0 +1,70 @@
+name: API Latency Report
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Number of requests per endpoint
+        type: number
+        default: 20
+      p95_budget_ms:
+        description: P95 warning budget in ms
+        type: number
+        default: 25
+      strict_threshold:
+        description: Fail workflow when p95 exceeds budget
+        type: boolean
+        default: false
+  push:
+  pull_request:
+
+jobs:
+  api-latency:
+    runs-on: windows-latest
+    continue-on-error: true
+    if: ${{ vars.CI_ENABLE_API_LATENCY == 'true' || github.event_name == 'workflow_dispatch' }}
+    env:
+      APP_PORT: '3000'
+      CI_ITERATIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.iterations || 20 }}
+      CI_P95_BUDGET_MS: ${{ github.event_name == 'workflow_dispatch' && inputs.p95_budget_ms || 25 }}
+      CI_STRICT_THRESHOLD: ${{ github.event_name == 'workflow_dispatch' && inputs.strict_threshold || false }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run API latency benchmark
+        shell: pwsh
+        run: |
+          $strictFlag = ''
+          if ($env:CI_STRICT_THRESHOLD -eq 'true') {
+            $strictFlag = ' --strict-threshold'
+          }
+          npm run perf:api-latency:with-start -- --label ci --iterations $env:CI_ITERATIONS --p95-budget-ms $env:CI_P95_BUDGET_MS$strictFlag
+
+      - name: Upload latency reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-latency-reports
+          path: reports/perf/*
+
+      - name: Write summary
+        if: always()
+        shell: pwsh
+        run: |
+          "## API Latency CI Summary" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          "- Optional non-blocking job: enabled" >> $env:GITHUB_STEP_SUMMARY
+          "- Iterations: $env:CI_ITERATIONS" >> $env:GITHUB_STEP_SUMMARY
+          "- P95 budget (ms): $env:CI_P95_BUDGET_MS" >> $env:GITHUB_STEP_SUMMARY
+          "- Strict threshold: $env:CI_STRICT_THRESHOLD" >> $env:GITHUB_STEP_SUMMARY
+          "- Reports: uploaded as workflow artifact 'api-latency-reports'" >> $env:GITHUB_STEP_SUMMARY

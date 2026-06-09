@@ -14,6 +14,9 @@
         "verify:report-access:strict": "node scripts/verify-report-access.js --strict",
         "verify:report-access:with-start": "start-server-and-test start http://localhost:3000 \"node scripts/verify-report-access.js\"",
         "verify:report-access:strict:with-start": "start-server-and-test start http://localhost:3000 \"node scripts/verify-report-access.js --strict\"",
+        "perf:api-latency": "node scripts/api-latency-report.js",
+        "perf:api-latency:with-start": "start-server-and-test start http://localhost:3000 \"node scripts/api-latency-report.js\"",
+        "ci:api-latency": "node scripts/api-latency-report.js ci 20 --p95-budget-ms 25",
         "ci:report-access": "node scripts/run-report-access-ci.js",
         "ci:report-access:strict-sql": "node scripts/run-report-access-ci.js --require-sql-login"
     },
@@ -22,6 +25,7 @@
     },
     "dependencies": {
         "@azure/msal-node": "^5.2.2",
+        "dotenv": "^17.4.2",
         "express": "^5.2.1",
         "jsonwebtoken": "^9.0.2",
         "jwks-rsa": "^3.2.0",
