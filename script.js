@@ -14,6 +14,11 @@ let authModal = null;
 let currentLang = 'de';
 let entraConfigPromise = null;
 let msalClientPromise = null;
+let languageApplyInProgress = false;
+let languageSyncObserver = null;
+let languageSyncTimer = null;
+let languageSyncSuspended = false;
+const SUPPORTED_LANGS = ['en', 'de', 'es', 'fr', 'zh', 'ko', 'ru', 'pt', 'ja', 'sk', 'tr', 'it', 'hi', 'hu'];
 
 const I18N = {
   pt: {},
@@ -409,8 +414,129 @@ Object.keys(I18N_EXT).forEach((lang) => {
 
 const I18N_SHAPE_DEFAULTS = {
   lastStation: 'Last Station',
+  lastSourceManual: 'Manual last station',
+  lastSourceAuto: 'Automatic last station',
+  lastSourceManualShort: 'M',
+  lastSourceAutoShort: 'A',
+  lastStationDependencyBlocked: 'Cannot unset LAST while this station is still the effective last station for line(s):',
+  lastStationDependencyHint: 'Update line assignments first, then try again.',
+  shapeMiniAppTitle: 'Shape Mini App (Drag & Drop)',
+  shapeMiniAppHint: 'Drag stations to reorder the line flow. Click cards to mark and remove with the left-arrow button.',
+  shapeMiniAppEmpty: 'No stations assigned for this line yet.',
   lineShape: 'Line Shape',
-  visual: 'Visual'
+  visual: 'Visual',
+  closeLabel: 'Close',
+  switchThemeAria: 'Switch theme',
+  stationFlagsLabel: 'Station Flags',
+  idAndDescriptionRequired: 'ID and description required!',
+  cycleTimeInvalid: 'Cycle time must be a valid number!',
+  stationIdExists: 'Station ID already exists!',
+  lineIdExists: 'Line ID already exists!',
+  selectLineAndStation: 'Please select line and station!',
+  assignmentAlreadyExists: 'This assignment already exists!',
+  idAlreadyExists: 'ID already exists!',
+  shiftModellNameRequiredAlert: 'Shift Modell Name required!',
+  allFieldsRequired: 'All fields required!',
+  shiftModellNamePleaseProvide: 'Please provide a Shift Modell Name.',
+  shiftModellSavedSuccess: 'Shift Modell saved successfully.',
+  noShiftModellsToExport: 'No Shift Modells to export!',
+  noShiftModellsWithEntriesToExport: 'No Shift Modells with entries to export!',
+  noShiftAssignmentsToExport: 'No shift assignments to export!',
+  unknownExportType: 'Unknown export type!',
+  noDataToExport: 'No data to export!',
+  selectLineFirst: 'Please select a line first.',
+  selectAtLeastOneStation: 'Please select at least one station.',
+  selectOption: 'Select',
+  roleUser: 'User',
+  roleAdmin: 'Admin',
+  permissionPlaceholder: 'permission',
+  defaultDateTime: '-1 (default)',
+  customDateTime: 'Custom date/time',
+  selectWeekplan: '-- Select weekplan --',
+  templateNamePlaceholder: 'e.g. Standard plant masterdata',
+  mqttImportOverwriteLabel: 'Overwrite existing profiles',
+  mqttImportRenameLabel: 'Rename imported profiles',
+  lineShapeLabelI: 'I  Straight',
+  lineShapeLabelL: 'L  Corner',
+  lineShapeLabelU: 'U  Return',
+  lineShapeLabelO: 'O  Loop',
+  lineShapeLabelS: 'S  Snake',
+  lineShapeLabelT: 'T  Junction',
+  lineShapeLabelCell: '#  Cell',
+  lineShapeLabelMZ: 'MZ  Modular Zones',
+  providerLocalLabel: 'Local',
+  providerEntraLabel: 'Entra',
+  providerAdHeaderLabel: 'AD Header',
+  providerMatrix42Label: 'Matrix42',
+  providerActiveDirectoryLabel: 'Active Directory',
+  apiConsoleChip: 'Digital Test Console',
+  mqttConsoleChip: 'Realtime Messaging Console',
+  brokerSettingsLogin: 'Broker Settings / Login',
+  profileTools: 'Profile Tools',
+  tlsCertificateTools: 'TLS Certificate Tools',
+  additionalMessageActions: 'Additional Message Actions',
+  mqttHostLabel: 'Host',
+  mqttPortLabel: 'Port',
+  mqttProtocolLabel: 'Protocol',
+  mqttClientIdLabel: 'Client ID',
+  mqttKeepaliveLabel: 'Keepalive (sec)',
+  mqttConnectTimeoutLabel: 'Connect Timeout (ms)',
+  mqttReconnectLabel: 'Reconnect (ms)',
+  mqttCleanSessionLabel: 'Clean session',
+  mqttVerifyTlsLabel: 'Verify TLS cert',
+  mqttConnectLabel: 'Connect',
+  mqttDisconnectLabel: 'Disconnect',
+  mqttRefreshStatusLabel: 'Refresh Status',
+  mqttProfileLabel: 'Profile',
+  mqttNewProfileNameLabel: 'New profile name',
+  mqttIncludePasswordExportLabel: 'Include password in export',
+  mqttImportConflictModeLabel: 'Import conflict mode',
+  mqttSaveSettingsLabel: 'Save Settings',
+  mqttSaveAsProfileLabel: 'Save As Profile',
+  mqttLoadProfileLabel: 'Load Profile',
+  mqttDuplicateProfileLabel: 'Duplicate Profile',
+  mqttDeleteProfileLabel: 'Delete Profile',
+  mqttExportSettingsLabel: 'Export Settings',
+  mqttImportSettingsLabel: 'Import Settings',
+  mqttCaPemLabel: 'CA PEM (optional)',
+  mqttImportCertLabel: 'Import Cert',
+  mqttLoadMagnaCertLabel: 'Load magna_global_fullchain.pem',
+  mqttExportCertLabel: 'Export Cert',
+  mqttRecommendedCertLabel: 'Recommended certificate file: magna_global_fullchain.pem',
+  mqttTopicLabel: 'Topic',
+  mqttQosLabel: 'QoS',
+  mqttRetainLabel: 'Retain',
+  mqttSubscribeLabel: 'Subscribe',
+  mqttUnsubscribeLabel: 'Unsubscribe',
+  mqttPublishLabel: 'Publish',
+  mqttLoadMessagesLabel: 'Load Messages',
+  mqttPayloadJsonLabel: 'Payload (JSON)',
+  mqttPayloadVarKeyLabel: 'Payload variable key',
+  mqttPayloadVarValueLabel: 'Payload variable value',
+  mqttParsePayloadJsonLabel: 'Parse payload as JSON',
+  mqttAddVariableLabel: 'Add Variable',
+  mqttClearVarsLabel: 'Clear Vars',
+  mqttClearMessagesLabel: 'Clear Messages',
+  mqttHostPlaceholder: 'broker.example.com',
+  mqttOptionalPlaceholder: 'optional',
+  mqttProfileNamePlaceholder: 'e.g. Plant-A-Prod',
+  mqttTopicPlaceholder: 'factory/line/very/long/topic/path/#',
+  mqttPayloadVarKeyPlaceholder: 'stationId',
+  mqttPayloadVarValuePlaceholder: 'ST-1001'
+  ,mqttExplorerTitle: 'MQTT Explorer'
+  ,loadingManagedUsersFailed: 'Loading managed users failed.'
+  ,createUserFailed: 'Create user failed.'
+  ,updatingRoleFailed: 'Updating role failed.'
+  ,updatingUserStateFailed: 'Updating user state failed.'
+  ,grantPermissionFailed: 'Grant permission failed.'
+  ,revokePermissionFailed: 'Revoke permission failed.'
+  ,deleteUserFailed: 'Delete user failed.'
+  ,unableLoadEntraConfig: 'Unable to load Entra configuration.'
+  ,msalLibraryMissing: 'MSAL Browser library is not loaded.'
+  ,entraBackendNotConfigured: 'Entra SSO is not configured on backend (missing ENTRA_CLIENT_ID).'
+  ,entraAccessTokenFailed: 'Entra access token acquisition failed.'
+  ,authRequestFailed: 'Authentication request failed.'
+  ,logoutRequestFailedCleanup: 'Logout request failed. Local cleanup was applied.'
 };
 
 Object.keys(I18N).forEach((lang) => {
@@ -475,9 +601,28 @@ Object.assign(I18N.en, {
   ,selectTemplateFromCatalog: 'Please select a template from catalog.'
   ,selectTargetPlantFirst: 'Please select a target plant first.'
   ,templateSavedForPlantPrefix: 'Template saved for plant'
+  ,closeLabel: 'Close'
+  ,switchThemeAria: 'Switch theme'
+  ,stationFlagsLabel: 'Station Flags'
 });
 
 Object.assign(I18N.es, {
+  loginAuth: 'Inicio de sesión / Auth',
+  selectShiftModell: 'Seleccionar modelo de turno',
+  selectTarget: 'Seleccionar destino',
+  stationSingular: 'Estación',
+  lineSingular: 'Línea',
+  providerLocalLabel: 'Local',
+  providerEntraLabel: 'Entra',
+  providerAdHeaderLabel: 'AD Header',
+  providerMatrix42Label: 'Matrix42',
+  providerActiveDirectoryLabel: 'Active Directory',
+  mqttImportOverwriteLabel: 'Sobrescribir perfiles existentes',
+  mqttImportRenameLabel: 'Renombrar perfiles importados',
+  catalogLoading: 'Cargando catálogo...',
+  sampleDataLoaded: 'Datos de prueba de planta cargados correctamente.',
+  darkLabel: 'Oscuro',
+  lightLabel: 'Claro',
   apiInputFields: 'Campos de entrada',
   apiOutputFields: 'Campos de salida',
   assignmentId: 'ID de asignación',
@@ -500,6 +645,22 @@ Object.assign(I18N.es, {
 });
 
 Object.assign(I18N.fr, {
+  loginAuth: 'Connexion / Auth',
+  selectShiftModell: 'Sélectionner le modèle de poste',
+  selectTarget: 'Sélectionner la cible',
+  stationSingular: 'Station',
+  lineSingular: 'Ligne',
+  providerLocalLabel: 'Local',
+  providerEntraLabel: 'Entra',
+  providerAdHeaderLabel: 'AD Header',
+  providerMatrix42Label: 'Matrix42',
+  providerActiveDirectoryLabel: 'Active Directory',
+  mqttImportOverwriteLabel: 'Écraser les profils existants',
+  mqttImportRenameLabel: 'Renommer les profils importés',
+  catalogLoading: 'Chargement du catalogue...',
+  sampleDataLoaded: 'Données de test usine chargées avec succès.',
+  darkLabel: 'Sombre',
+  lightLabel: 'Clair',
   apiInputFields: 'Champs d\'entrée',
   apiOutputFields: 'Champs de sortie',
   assignmentId: 'ID d\'affectation',
@@ -522,6 +683,21 @@ Object.assign(I18N.fr, {
 });
 
 Object.assign(I18N.zh, {
+  selectShiftModell: '选择班次模型',
+  selectTarget: '选择目标',
+  stationSingular: '工位',
+  lineSingular: '产线',
+  providerLocalLabel: '本地',
+  providerEntraLabel: 'Entra',
+  providerAdHeaderLabel: 'AD 头',
+  providerMatrix42Label: 'Matrix42',
+  providerActiveDirectoryLabel: 'Active Directory',
+  mqttImportOverwriteLabel: '覆盖现有配置',
+  mqttImportRenameLabel: '重命名导入配置',
+  catalogLoading: '正在加载目录...',
+  sampleDataLoaded: '工厂测试数据加载成功。',
+  darkLabel: '深色',
+  lightLabel: '浅色',
   apiInputFields: '输入字段',
   apiOutputFields: '输出字段',
   assignmentId: '分配 ID',
@@ -544,6 +720,10 @@ Object.assign(I18N.zh, {
 });
 
 Object.assign(I18N.de, {
+  selectShiftModell: 'Schichtmodell auswählen',
+  selectTarget: 'Ziel auswählen',
+  stationSingular: 'Station',
+  lineSingular: 'Linie',
   start: 'Start',
   end: 'Ende',
   duration: 'Dauer',
@@ -596,7 +776,226 @@ Object.assign(I18N.de, {
   sendTestPointSuccess: 'Testpunkt an InfluxDB gesendet!',
   selectTemplateFromCatalog: 'Bitte eine Vorlage aus dem Katalog auswählen.',
   selectTargetPlantFirst: 'Bitte zuerst ein Zielwerk auswählen.',
-  templateSavedForPlantPrefix: 'Vorlage gespeichert für Werk'
+  templateSavedForPlantPrefix: 'Vorlage gespeichert für Werk',
+  closeLabel: 'Schließen',
+  switchThemeAria: 'Design umschalten',
+  stationFlagsLabel: 'Stationskennzeichen',
+  lastSourceManual: 'Manuell gesetzte Endstation',
+  lastSourceAuto: 'Automatisch gesetzte Endstation',
+  lastSourceManualShort: 'M',
+  lastSourceAutoShort: 'A',
+  shapeMiniAppTitle: 'Shape-Mini-App (Drag-and-Drop)',
+  shapeMiniAppHint: 'Stationen ziehen, um den Linienfluss neu zu ordnen. Karten anklicken, markieren und mit dem Linkspfeil entfernen.',
+  shapeMiniAppEmpty: 'Fuer diese Linie sind noch keine Stationen zugeordnet.',
+  selectOption: 'Auswählen',
+  roleUser: 'Benutzer',
+  roleAdmin: 'Admin',
+  permissionPlaceholder: 'Berechtigung',
+  defaultDateTime: '-1 (Standard)',
+  customDateTime: 'Benutzerdefiniertes Datum/Uhrzeit',
+  selectWeekplan: '-- Schichtmodell wählen --',
+  templateNamePlaceholder: 'z. B. Standard-Werkstammdaten',
+  mqttImportOverwriteLabel: 'Vorhandene Profile überschreiben',
+  mqttImportRenameLabel: 'Importierte Profile umbenennen',
+  lineShapeLabelI: 'I  Gerade',
+  lineShapeLabelL: 'L  Ecke',
+  lineShapeLabelU: 'U  Rücklauf',
+  lineShapeLabelO: 'O  Schleife',
+  lineShapeLabelS: 'S  Schlange',
+  lineShapeLabelT: 'T  Abzweig',
+  lineShapeLabelCell: '#  Zelle',
+  lineShapeLabelMZ: 'MZ  Modulare Zonen',
+  providerLocalLabel: 'Lokal',
+  providerEntraLabel: 'Entra',
+  providerAdHeaderLabel: 'AD-Header',
+  providerMatrix42Label: 'Matrix42',
+  providerActiveDirectoryLabel: 'Active Directory',
+  apiConsoleChip: 'Digitale Testkonsole',
+  mqttConsoleChip: 'Echtzeit-Nachrichtenkonsole',
+  brokerSettingsLogin: 'Broker-Einstellungen / Login',
+  profileTools: 'Profilwerkzeuge',
+  tlsCertificateTools: 'TLS-Zertifikatwerkzeuge',
+  additionalMessageActions: 'Zusätzliche Nachrichtenaktionen',
+  mqttHostLabel: 'Host',
+  mqttPortLabel: 'Port',
+  mqttProtocolLabel: 'Protokoll',
+  mqttClientIdLabel: 'Client-ID',
+  mqttKeepaliveLabel: 'Keepalive (Sek.)',
+  mqttConnectTimeoutLabel: 'Connect-Timeout (ms)',
+  mqttReconnectLabel: 'Reconnect (ms)',
+  mqttCleanSessionLabel: 'Saubere Sitzung',
+  mqttVerifyTlsLabel: 'TLS-Zertifikat prüfen',
+  mqttConnectLabel: 'Verbinden',
+  mqttDisconnectLabel: 'Trennen',
+  mqttRefreshStatusLabel: 'Status aktualisieren',
+  mqttProfileLabel: 'Profil',
+  mqttNewProfileNameLabel: 'Neuer Profilname',
+  mqttIncludePasswordExportLabel: 'Passwort im Export einschließen',
+  mqttImportConflictModeLabel: 'Import-Konfliktmodus',
+  mqttSaveSettingsLabel: 'Einstellungen speichern',
+  mqttSaveAsProfileLabel: 'Als Profil speichern',
+  mqttLoadProfileLabel: 'Profil laden',
+  mqttDuplicateProfileLabel: 'Profil duplizieren',
+  mqttDeleteProfileLabel: 'Profil löschen',
+  mqttExportSettingsLabel: 'Einstellungen exportieren',
+  mqttImportSettingsLabel: 'Einstellungen importieren',
+  mqttCaPemLabel: 'CA-PEM (optional)',
+  mqttImportCertLabel: 'Zertifikat importieren',
+  mqttLoadMagnaCertLabel: 'magna_global_fullchain.pem laden',
+  mqttExportCertLabel: 'Zertifikat exportieren',
+  mqttRecommendedCertLabel: 'Empfohlene Zertifikatsdatei: magna_global_fullchain.pem',
+  mqttTopicLabel: 'Topic',
+  mqttQosLabel: 'QoS',
+  mqttRetainLabel: 'Retain',
+  mqttSubscribeLabel: 'Abonnieren',
+  mqttUnsubscribeLabel: 'Abbestellen',
+  mqttPublishLabel: 'Veröffentlichen',
+  mqttLoadMessagesLabel: 'Nachrichten laden',
+  mqttPayloadJsonLabel: 'Payload (JSON)',
+  mqttPayloadVarKeyLabel: 'Payload-Variablenschlüssel',
+  mqttPayloadVarValueLabel: 'Payload-Variablenwert',
+  mqttParsePayloadJsonLabel: 'Payload als JSON parsen',
+  mqttAddVariableLabel: 'Variable hinzufügen',
+  mqttClearVarsLabel: 'Variablen löschen',
+  mqttClearMessagesLabel: 'Nachrichten löschen'
+});
+
+Object.assign(I18N.it, {
+  providerLocalLabel: 'Locale',
+  mqttImportOverwriteLabel: 'Sovrascrivi profili esistenti',
+  mqttImportRenameLabel: 'Rinomina profili importati',
+  catalogLoading: 'Caricamento catalogo...',
+  sampleDataLoaded: 'Dati di test impianto caricati con successo.'
+});
+
+Object.assign(I18N.hi, {
+  providerLocalLabel: 'स्थानीय',
+  mqttImportOverwriteLabel: 'मौजूदा प्रोफाइल ओवरराइट करें',
+  mqttImportRenameLabel: 'इम्पोर्ट किए गए प्रोफाइल का नाम बदलें',
+  catalogLoading: 'कैटलॉग लोड हो रहा है...',
+  sampleDataLoaded: 'प्लांट टेस्ट डेटा सफलतापूर्वक लोड हुआ।'
+});
+
+Object.assign(I18N.hu, {
+  providerLocalLabel: 'Helyi',
+  mqttImportOverwriteLabel: 'Meglevo profilok felulirasa',
+  mqttImportRenameLabel: 'Importalt profilok atnevezese',
+  catalogLoading: 'Katalogus betoltese...',
+  sampleDataLoaded: 'A gyari tesztadatok sikeresen betoltve.'
+});
+
+Object.assign(I18N.ko, {
+  selectShiftModell: '교대 모델 선택',
+  selectTarget: '대상 선택',
+  stationSingular: '스테이션',
+  lineSingular: '라인',
+  providerLocalLabel: '로컬',
+  providerEntraLabel: 'Entra',
+  providerAdHeaderLabel: 'AD Header',
+  providerMatrix42Label: 'Matrix42',
+  providerActiveDirectoryLabel: 'Active Directory',
+  mqttImportOverwriteLabel: '기존 프로필 덮어쓰기',
+  mqttImportRenameLabel: '가져온 프로필 이름 변경',
+  catalogLoading: '카탈로그 불러오는 중...',
+  sampleDataLoaded: '공장 테스트 데이터가 성공적으로 로드되었습니다.',
+  darkLabel: '다크',
+  lightLabel: '라이트',
+  switchThemeAria: '테마 전환'
+});
+
+Object.assign(I18N.ru, {
+  selectShiftModell: 'Выберите модель смены',
+  selectTarget: 'Выберите цель',
+  stationSingular: 'Станция',
+  lineSingular: 'Линия',
+  providerLocalLabel: 'Локальный',
+  providerEntraLabel: 'Entra',
+  providerAdHeaderLabel: 'AD Header',
+  providerMatrix42Label: 'Matrix42',
+  providerActiveDirectoryLabel: 'Active Directory',
+  mqttImportOverwriteLabel: 'Перезаписать существующие профили',
+  mqttImportRenameLabel: 'Переименовать импортированные профили',
+  catalogLoading: 'Загрузка каталога...',
+  sampleDataLoaded: 'Тестовые данные завода успешно загружены.',
+  darkLabel: 'Темная',
+  lightLabel: 'Светлая',
+  switchThemeAria: 'Переключить тему'
+});
+
+Object.assign(I18N.pt, {
+  selectShiftModell: 'Selecionar modelo de turno',
+  selectTarget: 'Selecionar destino',
+  stationSingular: 'Estacao',
+  lineSingular: 'Linha',
+  providerLocalLabel: 'Local',
+  providerEntraLabel: 'Entra',
+  providerAdHeaderLabel: 'AD Header',
+  providerMatrix42Label: 'Matrix42',
+  providerActiveDirectoryLabel: 'Active Directory',
+  mqttImportOverwriteLabel: 'Sobrescrever perfis existentes',
+  mqttImportRenameLabel: 'Renomear perfis importados',
+  catalogLoading: 'Carregando catalogo...',
+  sampleDataLoaded: 'Dados de teste da planta carregados com sucesso.',
+  darkLabel: 'Escuro',
+  lightLabel: 'Claro',
+  switchThemeAria: 'Alternar tema'
+});
+
+Object.assign(I18N.ja, {
+  selectShiftModell: 'シフトモデルを選択',
+  selectTarget: '対象を選択',
+  stationSingular: 'ステーション',
+  lineSingular: 'ライン',
+  providerLocalLabel: 'ローカル',
+  providerEntraLabel: 'Entra',
+  providerAdHeaderLabel: 'AD Header',
+  providerMatrix42Label: 'Matrix42',
+  providerActiveDirectoryLabel: 'Active Directory',
+  mqttImportOverwriteLabel: '既存プロファイルを上書き',
+  mqttImportRenameLabel: 'インポートしたプロファイルを改名',
+  catalogLoading: 'カタログを読み込み中...',
+  sampleDataLoaded: '工場テストデータの読み込みに成功しました。',
+  darkLabel: 'ダーク',
+  lightLabel: 'ライト',
+  switchThemeAria: 'テーマ切り替え'
+});
+
+Object.assign(I18N.sk, {
+  selectShiftModell: 'Vybrat model zmeny',
+  selectTarget: 'Vybrat ciel',
+  stationSingular: 'Stanica',
+  lineSingular: 'Linka',
+  providerLocalLabel: 'Lokalny',
+  providerEntraLabel: 'Entra',
+  providerAdHeaderLabel: 'AD Header',
+  providerMatrix42Label: 'Matrix42',
+  providerActiveDirectoryLabel: 'Active Directory',
+  mqttImportOverwriteLabel: 'Prepisat existujuce profily',
+  mqttImportRenameLabel: 'Premenovat importovane profily',
+  catalogLoading: 'Nacitava sa katalog...',
+  sampleDataLoaded: 'Testovacie data zavodu boli uspesne nacitane.',
+  darkLabel: 'Tmavy',
+  lightLabel: 'Svetly',
+  switchThemeAria: 'Prepnut temu'
+});
+
+Object.assign(I18N.tr, {
+  selectShiftModell: 'Vardiya modeli sec',
+  selectTarget: 'Hedef sec',
+  stationSingular: 'Istasyon',
+  lineSingular: 'Hat',
+  providerLocalLabel: 'Yerel',
+  providerEntraLabel: 'Entra',
+  providerAdHeaderLabel: 'AD Header',
+  providerMatrix42Label: 'Matrix42',
+  providerActiveDirectoryLabel: 'Active Directory',
+  mqttImportOverwriteLabel: 'Mevcut profilleri uzerine yaz',
+  mqttImportRenameLabel: 'Ice aktarilan profilleri yeniden adlandir',
+  catalogLoading: 'Katalog yukleniyor...',
+  sampleDataLoaded: 'Fabrika test verileri basariyla yuklendi.',
+  darkLabel: 'Koyu',
+  lightLabel: 'Acik',
+  switchThemeAria: 'Temayi degistir'
 });
 
 const TABLE_RUNTIME_I18N = {
@@ -1228,6 +1627,94 @@ function translateRuntimeText(text) {
   return raw;
 }
 
+function syncLanguageKeysFromEnglish() {
+  const basePack = I18N.en || {};
+  const autoFilled = [];
+
+  SUPPORTED_LANGS.forEach((lang) => {
+    if (!I18N[lang]) {
+      I18N[lang] = {};
+    }
+    Object.keys(basePack).forEach((key) => {
+      const currentValue = I18N[lang][key];
+      if (typeof currentValue === 'undefined' || currentValue === null || currentValue === '') {
+        I18N[lang][key] = basePack[key];
+        autoFilled.push(`${lang}.${key}`);
+      }
+    });
+  });
+
+  return autoFilled;
+}
+
+function syncRuntimeTranslationsForAllLanguages() {
+  const autoFilled = [];
+  Object.keys(RUNTIME_TRANSLATIONS || {}).forEach((sourceText) => {
+    const entry = RUNTIME_TRANSLATIONS[sourceText] || {};
+    SUPPORTED_LANGS.forEach((lang) => {
+      if (lang === 'en') {
+        return;
+      }
+      if (typeof entry[lang] === 'undefined' || entry[lang] === null || entry[lang] === '') {
+        entry[lang] = sourceText;
+        autoFilled.push(`${lang}.runtime:${sourceText}`);
+      }
+    });
+  });
+  return autoFilled;
+}
+
+function runLanguageSyncAudit(context = 'manual') {
+  const autoFilled = [
+    ...syncLanguageKeysFromEnglish(),
+    ...syncRuntimeTranslationsForAllLanguages()
+  ];
+  if (autoFilled.length > 0) {
+    console.warn(`[i18n-sync] Auto-filled ${autoFilled.length} missing translation entries from English (${context}).`, autoFilled.slice(0, 80));
+  }
+  return autoFilled;
+}
+
+function scheduleLanguageSync(context = 'mutation') {
+  if (languageSyncSuspended) {
+    return;
+  }
+  if (languageSyncTimer) {
+    clearTimeout(languageSyncTimer);
+  }
+  languageSyncTimer = setTimeout(() => {
+    languageSyncTimer = null;
+    runLanguageSyncAudit(context);
+    if (!languageApplyInProgress) {
+      applyLanguage();
+    }
+  }, 120);
+}
+
+function initLanguageSyncObserver() {
+  if (languageSyncObserver) {
+    return;
+  }
+  const targetNodes = [document.querySelector('.main-content'), document.getElementById('authModal')].filter(Boolean);
+  if (!targetNodes.length) {
+    return;
+  }
+
+  languageSyncObserver = new MutationObserver(() => {
+    if (!languageSyncSuspended) {
+      scheduleLanguageSync('dom-mutation');
+    }
+  });
+
+  targetNodes.forEach((node) => {
+    languageSyncObserver.observe(node, {
+      subtree: true,
+      childList: true,
+      characterData: true
+    });
+  });
+}
+
 if (typeof window !== 'undefined') {
   const nativeAlert = typeof window.alert === 'function' ? window.alert.bind(window) : null;
   const nativeConfirm = typeof window.confirm === 'function' ? window.confirm.bind(window) : null;
@@ -1244,9 +1731,20 @@ if (typeof window !== 'undefined') {
 }
 
 function applyLanguage() {
+  if (languageApplyInProgress) {
+    return;
+  }
+  languageApplyInProgress = true;
+  languageSyncSuspended = true;
+  try {
   function setText(selector, value) {
     const el = document.querySelector(selector);
     if (el) el.textContent = value;
+  }
+
+  function setAttr(selector, attr, value) {
+    const el = document.querySelector(selector);
+    if (el) el.setAttribute(attr, value);
   }
 
   function setPlaceholder(selector, value) {
@@ -1285,11 +1783,24 @@ function applyLanguage() {
   setText('label[for="masterdataPlant"]', tr('plantLabel'));
   setText('label[for="masterdataTemplateName"]', tr('templateNameLabel'));
   setText('label[for="masterdataTemplateCatalog"]', tr('templateCatalogLabel'));
-  setText('.main-content .section:nth-of-type(1) > .mb-2', tr('plantXtotalHint'));
+  setText('.main-content .section:nth-of-type(1) .mb-2', tr('plantXtotalHint'));
   setText('label[for="headerAuthProviderInput"]', tr('provider'));
   setText('label[for="headerAuthUserInput"]', tr('username'));
   setText('label[for="headerAuthPasswordInput"]', tr('password'));
   setText('label[for="headerAuthOneTimeCodeInput"]', tr('oneTimeCode'));
+  setText('#headerAuthProviderInput option[value="local"]', tr('providerLocalLabel'));
+  setText('#headerAuthProviderInput option[value="entra"]', tr('providerEntraLabel'));
+  setText('#headerAuthProviderInput option[value="ad-header"]', tr('providerAdHeaderLabel'));
+  setText('#headerAuthProviderInput option[value="matrix42"]', tr('providerMatrix42Label'));
+  setText('#headerAuthProviderInput option[value="activedirectory"]', tr('providerActiveDirectoryLabel'));
+  setText('#authProviderInput option[value="local"]', tr('providerLocalLabel'));
+  setText('#authProviderInput option[value="entra"]', tr('providerEntraLabel'));
+  setText('#authProviderInput option[value="ad-header"]', tr('providerAdHeaderLabel'));
+  setText('#authProviderInput option[value="matrix42"]', tr('providerMatrix42Label'));
+  setText('#authProviderInput option[value="activedirectory"]', tr('providerActiveDirectoryLabel'));
+  setAttr('#themeToggleBtn', 'aria-label', tr('switchThemeAria'));
+  setAttr('#authModal .auth-close-btn', 'aria-label', tr('closeLabel'));
+  setAttr('#authModal .auth-close-btn', 'title', tr('closeLabel'));
   setText('#entraSignInBtn', tr('entraSsoButton'));
   setText('#entraConfigBtn', tr('checkEntraButton'));
 
@@ -1348,15 +1859,15 @@ function applyLanguage() {
   setAllByOnclick('exportExcel(\'shiftSchedules\')', tr('exportLabel'));
 
   setText('.main-content .section:nth-of-type(1) h2', tr('masterDataPlantCatalog'));
-  setText('.main-content .section:nth-of-type(2) h2', '2. ' + tr('masterData'));
+  setText('.main-content .section:nth-of-type(2) h2', '1. ' + tr('masterData'));
   setText('.main-content .section:nth-of-type(2) h4', tr('stations'));
   setText('.main-content .section:nth-of-type(2) h4.mt-4', tr('lines'));
   setText('.main-content .section:nth-of-type(2) h4:nth-of-type(3)', tr('assignStationsToLines'));
-  setText('.main-content .section:nth-of-type(3) h2', '3. ' + tr('timeEvents'));
-  setText('.main-content .section:nth-of-type(4) h2', '4. ' + tr('shiftModells'));
-  setText('.main-content .section:nth-of-type(5) h2', '5. ' + tr('shiftSchedules'));
+  setText('.main-content .section:nth-of-type(3) h2', '2. ' + tr('timeEvents'));
+  setText('.main-content .section:nth-of-type(4) h2', '3. ' + tr('shiftModells'));
+  setText('.main-content .section:nth-of-type(5) h2', '4. ' + tr('shiftSchedules'));
   setText('.main-content .section:nth-of-type(5) h4.mt-4', tr('assignShiftModell'));
-  setText('.main-content .section:nth-of-type(6) h2', '6. ' + tr('apiQuerySimulator'));
+  setText('.main-content .section:nth-of-type(6) h2', '5. ' + tr('apiQuerySimulator'));
   setText('.main-content .section:nth-of-type(6) h4.mt-3', tr('apiCatalogTester'));
 
   const masterdataTemplateCatalog = document.getElementById('masterdataTemplateCatalog');
@@ -1377,6 +1888,17 @@ function applyLanguage() {
   const masterdataStatus = document.getElementById('masterdataTemplateStatus');
   if (masterdataStatus) {
     const rawStatus = String(masterdataStatus.textContent || '').trim();
+    const localizedStatusKeys = ['sampleDataLoaded', 'catalogLoading'];
+    const isLocalizedStatusValue = localizedStatusKeys.some((key) => {
+      return Object.values(I18N).some((pack) => String(pack?.[key] || '').trim() === rawStatus);
+    });
+    if (isLocalizedStatusValue) {
+      if (Object.values(I18N).some((pack) => String(pack?.sampleDataLoaded || '').trim() === rawStatus)) {
+        masterdataStatus.textContent = tr('sampleDataLoaded');
+      } else if (Object.values(I18N).some((pack) => String(pack?.catalogLoading || '').trim() === rawStatus)) {
+        masterdataStatus.textContent = tr('catalogLoading');
+      }
+    }
     const loadedMatch = rawStatus.match(/^(?:Template loaded|Vorlage geladen|Modele charge|模板已加载|Plantilla cargada|템플릿 로드됨|Шаблон загружен):\s*(.+)$/i);
     if (loadedMatch) {
       masterdataStatus.textContent = `${tr('templateLoadedPrefix')}: ${loadedMatch[1]}`;
@@ -1384,15 +1906,92 @@ function applyLanguage() {
   }
 
   setText('label[for="apiCatalogSelect"]', tr('endpoint'));
+  const mesConsoleHeads = document.querySelectorAll('.mes-console .mes-console-head h4');
+  if (mesConsoleHeads.length >= 2) {
+    mesConsoleHeads[0].textContent = tr('apiCatalogTester');
+    mesConsoleHeads[1].textContent = tr('mqttExplorerTitle');
+  }
+  const mesConsoleChips = document.querySelectorAll('.mes-console .mes-console-head .mes-chip');
+  if (mesConsoleChips.length >= 2) {
+    mesConsoleChips[0].textContent = tr('apiConsoleChip');
+    mesConsoleChips[1].textContent = tr('mqttConsoleChip');
+  }
   setText('.main-content .section:nth-of-type(6) .mt-3 label.form-label', tr('result'));
   setText('#apiCatalogResultLabel', tr('result'));
   setText('#assignModal .modal-title', tr('assignStationsToLines'));
   setText('#authAdminPanel h6', tr('adminUserMgmt'));
+  setText('#newManagedUserRole option[value="user"]', tr('roleUser'));
+  setText('#newManagedUserRole option[value="admin"]', tr('roleAdmin'));
   setText('.main-content .section:nth-of-type(5) #assignTargetType option[value="station"]', tr('stationSingular'));
   setText('.main-content .section:nth-of-type(5) #assignTargetType option[value="line"]', tr('lineSingular'));
+  setText('#assignShiftSelect option[value=""]', tr('selectShiftModell'));
+  setText('#assignTargetId option[value=""]', tr('selectTarget'));
+  setText('#mqttImportConflictMode option[value="overwrite"]', tr('mqttImportOverwriteLabel'));
+  setText('#mqttImportConflictMode option[value="rename"]', tr('mqttImportRenameLabel'));
+  const mqttSummaries = document.querySelectorAll('.mes-console:nth-of-type(2) .mes-collapsible > summary');
+  if (mqttSummaries.length >= 4) {
+    mqttSummaries[0].textContent = tr('brokerSettingsLogin');
+    mqttSummaries[1].textContent = tr('profileTools');
+    mqttSummaries[2].textContent = tr('tlsCertificateTools');
+    mqttSummaries[3].textContent = tr('additionalMessageActions');
+  }
+  setText('label[for="mqttHost"]', tr('mqttHostLabel'));
+  setText('label[for="mqttPort"]', tr('mqttPortLabel'));
+  setText('label[for="mqttProtocol"]', tr('mqttProtocolLabel'));
+  setText('label[for="mqttClientId"]', tr('mqttClientIdLabel'));
+  setText('label[for="mqttKeepalive"]', tr('mqttKeepaliveLabel'));
+  setText('label[for="mqttConnectTimeout"]', tr('mqttConnectTimeoutLabel'));
+  setText('label[for="mqttReconnectPeriod"]', tr('mqttReconnectLabel'));
+  setText('label[for="mqttProfileSelect"]', tr('mqttProfileLabel'));
+  setText('label[for="mqttProfileName"]', tr('mqttNewProfileNameLabel'));
+  setText('label[for="mqttImportConflictMode"]', tr('mqttImportConflictModeLabel'));
+  setText('label[for="mqttCaPem"]', tr('mqttCaPemLabel'));
+  setText('label[for="mqttTopic"]', tr('mqttTopicLabel'));
+  setText('label[for="mqttQos"]', tr('mqttQosLabel'));
+  setText('label[for="mqttPayload"]', tr('mqttPayloadJsonLabel'));
+  setText('label[for="mqttPayloadVarKey"]', tr('mqttPayloadVarKeyLabel'));
+  setText('label[for="mqttPayloadVarValue"]', tr('mqttPayloadVarValueLabel'));
+  setText('button[onclick="mqttExplorerConnect()"]', tr('mqttConnectLabel'));
+  setText('button[onclick="mqttExplorerDisconnect()"]', tr('mqttDisconnectLabel'));
+  setText('button[onclick="mqttExplorerRefreshStatus()"]', tr('mqttRefreshStatusLabel'));
+  setText('button[onclick="mqttExplorerSaveProfile()"]', tr('mqttSaveSettingsLabel'));
+  setText('button[onclick="mqttExplorerSaveProfileAs()"]', tr('mqttSaveAsProfileLabel'));
+  setText('button[onclick="mqttExplorerLoadSelectedProfile()"]', tr('mqttLoadProfileLabel'));
+  setText('button[onclick="mqttExplorerDuplicateSelectedProfile()"]', tr('mqttDuplicateProfileLabel'));
+  setText('button[onclick="mqttExplorerDeleteSelectedProfile()"]', tr('mqttDeleteProfileLabel'));
+  setText('button[onclick="mqttExplorerExportProfile()"]', tr('mqttExportSettingsLabel'));
+  setText('button[onclick="mqttExplorerImportProfile()"]', tr('mqttImportSettingsLabel'));
+  setText('button[onclick="mqttExplorerImportCaPem()"]', tr('mqttImportCertLabel'));
+  setText('button[onclick="mqttExplorerLoadMagnaPem()"]', tr('mqttLoadMagnaCertLabel'));
+  setText('button[onclick="mqttExplorerExportCaPem()"]', tr('mqttExportCertLabel'));
+  setText('button[onclick="mqttExplorerSubscribe()"]', tr('mqttSubscribeLabel'));
+  setText('button[onclick="mqttExplorerUnsubscribe()"]', tr('mqttUnsubscribeLabel'));
+  setText('button[onclick="mqttExplorerPublish()"]', tr('mqttPublishLabel'));
+  setText('button[onclick="mqttExplorerLoadMessages()"]', tr('mqttLoadMessagesLabel'));
+  setText('button[onclick="mqttExplorerAddPayloadVariable()"]', tr('mqttAddVariableLabel'));
+  setText('button[onclick="mqttExplorerClearPayloadVariables()"]', tr('mqttClearVarsLabel'));
+  setText('button[onclick="mqttExplorerClearMessages()"]', tr('mqttClearMessagesLabel'));
+  const mqttHint = document.querySelector('.mes-console:nth-of-type(2) .mes-status[style*="font-size:0.85rem"]');
+  if (mqttHint) mqttHint.textContent = tr('mqttRecommendedCertLabel');
+  const setCheckboxLabelText = (inputId, key) => {
+    const input = document.getElementById(inputId);
+    const label = input?.closest('label');
+    if (!input || !label) return;
+    label.innerHTML = '';
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(` ${tr(key)}`));
+  };
+  setCheckboxLabelText('mqttClean', 'mqttCleanSessionLabel');
+  setCheckboxLabelText('mqttRejectUnauthorized', 'mqttVerifyTlsLabel');
+  setCheckboxLabelText('mqttExportIncludePassword', 'mqttIncludePasswordExportLabel');
+  setCheckboxLabelText('mqttRetain', 'mqttRetainLabel');
+  setCheckboxLabelText('mqttPublishAsJson', 'mqttParsePayloadJsonLabel');
   setText('.main-content .section:nth-of-type(5) button[onclick="assignShiftSchedule()"]', tr('assign'));
   setText('#assignModal .modal-footer .btn-success', tr('saveLabel'));
   setText('#assignModal .modal-footer .btn-secondary', tr('cancelLabel'));
+  setText('#assignShapePreviewLabel', tr('lineShape'));
+  setText('#assignShapeMiniLabel', tr('shapeMiniAppTitle'));
+  setText('#assignShapeMiniHint', tr('shapeMiniAppHint'));
 
   const assignLabels = document.querySelectorAll('#assignModal .modal-body label.mb-1');
   if (assignLabels.length >= 3) {
@@ -1427,11 +2026,20 @@ function applyLanguage() {
   setPlaceholder('#newManagedUserName', tr('newUsername'));
   setPlaceholder('#newManagedUserPassword', tr('password'));
   setPlaceholder('#newManagedUserPermissions', tr('permissionsCommaSeparated'));
+  setPlaceholder('#masterdataTemplateName', tr('templateNameLabel'));
   setPlaceholder('#authUserInput', tr('username'));
   setPlaceholder('#authPasswordInput', tr('password'));
   setPlaceholder('#authOneTimeCodeInput', tr('oneTimeCode6'));
   setPlaceholder('#apiTokenInput', tr('manualBearerToken'));
   setPlaceholder('#apiStId', tr('stationNumber'));
+  setPlaceholder('#mqttHost', tr('mqttHostPlaceholder'));
+  setPlaceholder('#mqttClientId', tr('mqttOptionalPlaceholder'));
+  setPlaceholder('#mqttUsername', tr('mqttOptionalPlaceholder'));
+  setPlaceholder('#mqttPassword', tr('mqttOptionalPlaceholder'));
+  setPlaceholder('#mqttProfileName', tr('mqttProfileNamePlaceholder'));
+  setPlaceholder('#mqttTopic', tr('mqttTopicPlaceholder'));
+  setPlaceholder('#mqttPayloadVarKey', tr('mqttPayloadVarKeyPlaceholder'));
+  setPlaceholder('#mqttPayloadVarValue', tr('mqttPayloadVarValuePlaceholder'));
 
   const legend = document.getElementById('healthCheckLegend');
   if (legend) {
@@ -1472,8 +2080,14 @@ function applyLanguage() {
     langSelect.value = currentLang;
   }
 
+  updateThemeToggleButton(document.body.getAttribute('data-theme'));
+
   updateHeaderAuthUser();
   updateAuthDialogProviderUi(getSelectedAuthProvider());
+  } finally {
+    languageSyncSuspended = false;
+    languageApplyInProgress = false;
+  }
 }
 
 function setLanguage(lang) {
@@ -1483,10 +2097,12 @@ function setLanguage(lang) {
   } catch (_) {
     // Ignore storage failures.
   }
+  runLanguageSyncAudit('setLanguage');
   applyLanguage();
 }
 
 window.setLanguage = setLanguage;
+window.runLanguageSyncAudit = runLanguageSyncAudit;
 
 function toPermissionArray(value) {
   if (Array.isArray(value)) {
@@ -1557,7 +2173,7 @@ async function loadEntraConfig() {
       .then(async (res) => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) {
-          throw new Error(body?.error || 'Unable to load Entra configuration.');
+          throw new Error(body?.error || tr('unableLoadEntraConfig'));
         }
         return body || {};
       })
@@ -1573,12 +2189,12 @@ async function getMsalClient() {
   if (!msalClientPromise) {
     msalClientPromise = (async () => {
       if (!window.msal || !window.msal.PublicClientApplication) {
-        throw new Error('MSAL Browser library is not loaded.');
+        throw new Error(tr('msalLibraryMissing'));
       }
 
       const cfg = await loadEntraConfig();
       if (!cfg.enabled || !cfg.clientId) {
-        throw new Error('Entra SSO is not configured on backend (missing ENTRA_CLIENT_ID).');
+        throw new Error(tr('entraBackendNotConfigured'));
       }
 
       const scopes = Array.isArray(cfg.scopes) && cfg.scopes.length
@@ -1645,7 +2261,7 @@ async function acquireEntraAccessTokenInteractive(loginHint) {
   });
 
   if (!popup?.accessToken) {
-    throw new Error('Entra access token acquisition failed.');
+    throw new Error(tr('entraAccessTokenFailed'));
   }
   return popup.accessToken;
 }
@@ -1924,7 +2540,7 @@ function setAuthStatus(text) {
 
 function formatAuthApiErrorMessage(body, fallbackText) {
   const payload = body && typeof body === 'object' ? body : {};
-  const message = String(payload.message || payload.error || fallbackText || 'Authentication request failed.').trim();
+  const message = String(payload.message || payload.error || fallbackText || tr('authRequestFailed')).trim();
   const code = String(payload.code || '').trim();
   const retryable = payload.retryable === true;
 
@@ -2082,12 +2698,12 @@ window.logoutApiSession = async function() {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
-      logoutMessage = formatAuthApiErrorMessage(body, 'Logout request failed. Local cleanup was applied.');
+      logoutMessage = formatAuthApiErrorMessage(body, tr('logoutRequestFailedCleanup'));
       logoutMessageIsWarning = true;
     }
   } catch (err) {
     // Logout cleanup continues even if request fails.
-    logoutMessage = err?.message || 'Logout request failed. Local cleanup was applied.';
+    logoutMessage = err?.message || tr('logoutRequestFailedCleanup');
     logoutMessageIsWarning = true;
   }
   setApiToken(DEFAULT_API_TOKEN);
@@ -2146,21 +2762,21 @@ function renderManagedUsers(users) {
         <td><b>${u.username}</b></td>
         <td>
           <select class="form-select form-select-sm" onchange="updateManagedUserRole('${u.username}', this.value)">
-            <option value="user" ${u.role === 'user' ? 'selected' : ''}>user</option>
-            <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>admin</option>
+            <option value="user" ${u.role === 'user' ? 'selected' : ''}>${tr('user')}</option>
+            <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>${tr('roleAdmin')}</option>
           </select>
         </td>
         <td style="text-align:center;"><input type="checkbox" ${u.enabled ? 'checked' : ''} onchange="toggleManagedUserEnabled('${u.username}', this.checked)"></td>
         <td>${permsText || '-'}</td>
         <td>
-          <input id="permInput_${rowId}" class="form-control form-control-sm" list="permList_${rowId}" placeholder="permission">
+          <input id="permInput_${rowId}" class="form-control form-control-sm" list="permList_${rowId}" placeholder="${tr('permissionsLabel')}">
           <datalist id="permList_${rowId}">${options}</datalist>
           <div class="mt-1 d-flex gap-1">
-            <button class="btn btn-outline-success btn-sm" onclick="grantManagedPermission('${u.username}')">Grant</button>
-            <button class="btn btn-outline-warning btn-sm" onclick="revokeManagedPermission('${u.username}')">Revoke</button>
+            <button class="btn btn-outline-success btn-sm" onclick="grantManagedPermission('${u.username}')">${tr('grant')}</button>
+            <button class="btn btn-outline-warning btn-sm" onclick="revokeManagedPermission('${u.username}')">${tr('revoke')}</button>
           </div>
         </td>
-        <td><button class="btn btn-outline-danger btn-sm" onclick="deleteManagedUser('${u.username}')">Delete</button></td>
+        <td><button class="btn btn-outline-danger btn-sm" onclick="deleteManagedUser('${u.username}')">${tr('deleteLabel')}</button></td>
       </tr>
     `;
   }).join('');
@@ -2171,7 +2787,7 @@ window.loadManagedUsers = async function() {
   const res = await fetch('/api/auth/users');
   const body = await res.json().catch(() => []);
   if (!res.ok) {
-    throw new Error(body?.error || 'Loading managed users failed');
+    throw new Error(body?.error || tr('loadingManagedUsersFailed'));
   }
   renderManagedUsers(body);
   applyLanguage();
@@ -2204,7 +2820,7 @@ window.createManagedUser = async function() {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    alert(body?.error || 'Create user failed');
+    alert(body?.error || tr('createUserFailed'));
     return;
   }
 
@@ -2223,7 +2839,7 @@ window.updateManagedUserRole = async function(username, role) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    alert(body?.error || 'Updating role failed');
+    alert(body?.error || tr('updatingRoleFailed'));
     await loadManagedUsers();
     return;
   }
@@ -2238,7 +2854,7 @@ window.toggleManagedUserEnabled = async function(username, enabled) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    alert(body?.error || 'Updating user state failed');
+    alert(body?.error || tr('updatingUserStateFailed'));
     await loadManagedUsers();
     return;
   }
@@ -2258,7 +2874,7 @@ window.grantManagedPermission = async function(username) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    alert(body?.error || 'Grant permission failed');
+    alert(body?.error || tr('grantPermissionFailed'));
     return;
   }
   await loadManagedUsers();
@@ -2278,7 +2894,7 @@ window.revokeManagedPermission = async function(username) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    alert(body?.error || 'Revoke permission failed');
+    alert(body?.error || tr('revokePermissionFailed'));
     return;
   }
   await loadManagedUsers();
@@ -2292,11 +2908,19 @@ window.deleteManagedUser = async function(username) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    alert(body?.error || 'Delete user failed');
+    alert(body?.error || tr('deleteUserFailed'));
     return;
   }
   await loadManagedUsers();
 };
+
+function syncGlobalModalState() {
+  const hasOpenModal = Array.from(document.querySelectorAll('.modal')).some((modal) => {
+    return modal.classList.contains('show') && modal.style.display !== 'none';
+  });
+  document.body.classList.toggle('modal-blur-open', hasOpenModal);
+  document.body.style.overflow = hasOpenModal ? 'hidden' : '';
+}
 
 window.openAuthDialog = async function() {
   authModal = document.getElementById('authModal');
@@ -2308,13 +2932,13 @@ window.openAuthDialog = async function() {
   authModal.setAttribute('aria-modal', 'true');
   authModal.removeAttribute('aria-hidden');
   document.body.classList.add('auth-modal-open');
-  document.body.style.overflow = 'hidden';
+  syncGlobalModalState();
 
   if (hasAdminAccess()) {
     try {
       await loadManagedUsers();
     } catch (err) {
-      setAuthStatus(err?.message || 'Loading admin data failed.');
+      setAuthStatus(err?.message || tr('loadingManagedUsersFailed'));
     }
   }
 };
@@ -2326,7 +2950,7 @@ window.closeAuthDialog = function() {
   modal.classList.remove('show');
   modal.setAttribute('aria-hidden', 'true');
   document.body.classList.remove('auth-modal-open');
-  document.body.style.overflow = '';
+  syncGlobalModalState();
 };
 
 function nowLabel() {
@@ -2831,7 +3455,7 @@ const API_CATALOG = [
     inputs: [
       { name: 'id', label: 'Line ID', location: 'body', required: true, recommendationKey: 'lineId' },
       { name: 'description', label: 'Description', location: 'body', required: true },
-      { name: 'shapeType', label: 'Shape Type', location: 'body', type: 'select', options: ['I-shape', 'L-shape', 'U-shape', 'O-shape', 'S-shape', 'T-shape', 'Cell-shape'] }
+      { name: 'shapeType', label: 'Shape Type', location: 'body', type: 'select', options: ['I-shape', 'L-shape', 'U-shape', 'O-shape', 'S-shape', 'T-shape', 'Cell-shape', 'Modular-zones-shape'] }
     ]
   },
   {
@@ -3560,6 +4184,20 @@ function getSelectedApiCatalogEntry() {
   return API_CATALOG.find((entry) => entry.id === select.value) || null;
 }
 
+function getLocalizedCatalogOptionLabel(input, optionValue) {
+  const value = String(optionValue ?? '');
+
+  if (input?.name === 'shapeType') {
+    return getLineShapeOptionLabel(value);
+  }
+  if (value === 'true') return tr('yesLabel');
+  if (value === 'false') return tr('noLabel');
+  if (value === 'station') return tr('stationSingular');
+  if (value === 'line') return tr('lineSingular');
+
+  return value;
+}
+
 function renderApiCatalogInputs() {
   const entry = getSelectedApiCatalogEntry();
   const inputsHost = document.getElementById('apiCatalogInputs');
@@ -3596,8 +4234,8 @@ function renderApiCatalogInputs() {
         <div class="col-md-6">
           <label class="form-label mb-1" for="${id}_mode">${input.label}${requiredMark}</label>
           <select id="${id}_mode" class="form-select form-select-sm mb-1">
-            <option value="default" selected>-1 (default)</option>
-            <option value="custom">Custom date/time</option>
+            <option value="default" selected>${tr('defaultDateTime')}</option>
+            <option value="custom">${tr('customDateTime')}</option>
           </select>
           <input id="${id}" class="form-control form-control-sm" type="datetime-local" style="display:none;">
         </div>
@@ -3609,8 +4247,8 @@ function renderApiCatalogInputs() {
         <div class="col-md-6">
           <label class="form-label mb-1" for="${id}">${input.label}${requiredMark}</label>
           <select id="${id}" class="form-select form-select-sm">
-            <option value="">Select</option>
-            ${input.options.map((opt) => `<option value="${opt}">${opt}</option>`).join('')}
+            <option value="">${tr('dropdownSelect')}</option>
+            ${input.options.map((opt) => `<option value="${opt}">${getLocalizedCatalogOptionLabel(input, opt)}</option>`).join('')}
           </select>
         </div>
       `;
@@ -3632,7 +4270,7 @@ function renderApiCatalogInputs() {
         <div class="col-md-6">
           <label class="form-label mb-1" for="${id}">${input.label}${requiredMark}</label>
           <select id="${id}" class="form-select form-select-sm">
-            <option value="">Select</option>
+            <option value="">${tr('dropdownSelect')}</option>
           </select>
         </div>
       `;
@@ -3642,7 +4280,7 @@ function renderApiCatalogInputs() {
         <div class="col-md-6">
           <label class="form-label mb-1" for="${id}">${input.label}${requiredMark}</label>
           <select id="${id}" class="form-select form-select-sm">
-            <option value="">Select</option>
+            <option value="">${tr('dropdownSelect')}</option>
             ${recs.map((value) => `<option value="${value}">${value}</option>`).join('')}
           </select>
         </div>
@@ -3686,7 +4324,7 @@ function renderApiCatalogInputs() {
       const values = t === 'line'
         ? (Array.isArray(lines) ? lines.map((l) => String(l.id || '')).filter(Boolean) : [])
         : (Array.isArray(stations) ? stations.map((s) => String(s.id || '')).filter(Boolean) : []);
-      targetEl.innerHTML = '<option value="">Select</option>' + values.map((v) => `<option value="${v}">${v}</option>`).join('');
+      targetEl.innerHTML = `<option value="">${tr('dropdownSelect')}</option>` + values.map((v) => `<option value="${v}">${v}</option>`).join('');
     };
     if (typeEl) {
       typeEl.onchange = refillTargets;
@@ -4276,7 +4914,7 @@ function mqttExplorerLoadProfileFromStorage() {
 function mqttExplorerSetStatus(message, isError = false) {
   const el = document.getElementById('mqttExplorerStatus');
   if (!el) return;
-  el.style.color = isError ? 'var(--accent-red)' : 'var(--accent-grey)';
+  el.style.color = isError ? 'var(--accent-red)' : 'var(--text-color)';
   el.textContent = `[${nowLabel()}] ${String(message || '')}`;
 }
 
@@ -4874,8 +5512,8 @@ function updateThemeToggleButton(theme) {
   if (!button)
     return;
   const isLight = theme === 'light';
-  button.textContent = isLight ? 'Dark' : 'Light';
-  button.setAttribute('aria-label', isLight ? 'Switch to dark theme' : 'Switch to light theme');
+  button.textContent = isLight ? tr('darkLabel') : tr('lightLabel');
+  button.setAttribute('aria-label', tr('switchThemeAria'));
 }
 
 function applyTheme(theme) {
@@ -4917,6 +5555,12 @@ function normalizeLineShapeType(value) {
     't-shape': 'T-shape',
     cell: 'Cell-shape',
     'cell-shape': 'Cell-shape',
+    mz: 'Modular-zones-shape',
+    modular: 'Modular-zones-shape',
+    'modular-zones': 'Modular-zones-shape',
+    'modular-zones-shape': 'Modular-zones-shape',
+    'modular zones': 'Modular-zones-shape',
+    modularzones: 'Modular-zones-shape',
     // Legacy aliases mapped to fixed allowed values.
     ring: 'O-shape',
     'ring-shape': 'O-shape',
@@ -4936,7 +5580,8 @@ function getLineShapePreview(shapeType) {
     'O-shape': '[ () ]',
     'S-shape': '[~S~]',
     'T-shape': '[ -|- ]',
-    'Cell-shape': '[#]'
+    'Cell-shape': '[#]',
+    'Modular-zones-shape': '[MZ]'
   };
   return map[shape] || map['I-shape'];
 }
@@ -4957,6 +5602,8 @@ function getLineShapePreviewMarkup(shapeType) {
     svgContent = '<path d="M10 10 H70 M40 10 V32"/>';
   } else if (shape === 'Cell-shape') {
     svgContent = '<rect x="18" y="10" width="44" height="20" rx="3" ry="3"/><path d="M18 20 H62 M31 10 V30 M49 10 V30"/>';
+  } else if (shape === 'Modular-zones-shape') {
+    svgContent = '<rect x="8" y="11" width="18" height="12" rx="3" ry="3"/><rect x="8" y="26" width="18" height="10" rx="3" ry="3"/><rect x="31" y="11" width="18" height="18" rx="3" ry="3"/><rect x="60" y="11" width="12" height="18" rx="3" ry="3"/><path d="M17 23 V26"/><path d="M26 20 H31"/><path d="M49 20 H60" stroke-dasharray="5 4"/>';
   }
 
   return `
@@ -4988,13 +5635,14 @@ function updateNewLineShapePreview(shapeType) {
 function getLineShapeOptionLabel(shapeType) {
   const shape = normalizeLineShapeType(shapeType);
   const map = {
-    'I-shape': 'I  Straight',
-    'L-shape': 'L  Corner',
-    'U-shape': 'U  Return',
-    'O-shape': 'O  Loop',
-    'S-shape': 'S  Snake',
-    'T-shape': 'T  Junction',
-    'Cell-shape': '#  Cell'
+    'I-shape': tr('lineShapeLabelI'),
+    'L-shape': tr('lineShapeLabelL'),
+    'U-shape': tr('lineShapeLabelU'),
+    'O-shape': tr('lineShapeLabelO'),
+    'S-shape': tr('lineShapeLabelS'),
+    'T-shape': tr('lineShapeLabelT'),
+    'Cell-shape': tr('lineShapeLabelCell'),
+    'Modular-zones-shape': tr('lineShapeLabelMZ')
   };
   return map[shape] || map['I-shape'];
 }
@@ -5023,6 +5671,184 @@ function animateLineShapePreviews() {
     // Animation is optional and should never block the core UI.
   }
 }
+
+function getStationById(stationId) {
+  const needle = String(stationId ?? '').trim();
+  if (!needle) return null;
+  return stations.find((station) => String(station.id ?? '').trim() === needle) || null;
+}
+
+const stationLastSourceMap = new Map();
+
+function hasManualLastPreference(stationOrId) {
+  const station = typeof stationOrId === 'string' ? getStationById(stationOrId) : stationOrId;
+  if (!station) return false;
+  if (station.lastStationManual === true) return true;
+  return typeof station.lastStationManual === 'undefined' && station.lastStation === true;
+}
+
+function syncLastStationFlagsFromAssignments() {
+  if (!Array.isArray(stations)) return;
+
+  const stationById = new Map(
+    stations.map((station) => [String(station.id ?? '').trim(), station])
+  );
+
+  stationLastSourceMap.clear();
+
+  stations.forEach((station) => {
+    station.lastStation = false;
+  });
+
+  const groupedByLine = {};
+  assignments.forEach((assignment) => {
+    const lineId = String(assignment.lineId ?? '').trim();
+    const stationId = String(assignment.stationId ?? '').trim();
+    if (!lineId || !stationId) return;
+    if (!groupedByLine[lineId]) groupedByLine[lineId] = [];
+    groupedByLine[lineId].push(stationId);
+  });
+
+  Object.keys(groupedByLine).forEach((lineId) => {
+    const stationIds = groupedByLine[lineId];
+    const manualCandidates = stationIds.filter((stationId) => hasManualLastPreference(stationId));
+    const lastStationId = (manualCandidates[manualCandidates.length - 1] || stationIds[stationIds.length - 1] || '');
+    const source = manualCandidates.length > 0 ? 'manual' : 'auto';
+    const station = stationById.get(lastStationId);
+    if (station) {
+      station.lastStation = true;
+      const prev = stationLastSourceMap.get(lastStationId);
+      stationLastSourceMap.set(lastStationId, prev === 'manual' ? 'manual' : source);
+    }
+  });
+}
+
+function getAssignedStationIdsForLine(lineId) {
+  const normalizedLineId = String(lineId ?? '').trim();
+  if (!normalizedLineId) return [];
+  return assignments
+    .filter((assignment) => String(assignment.lineId ?? '').trim() === normalizedLineId)
+    .map((assignment) => String(assignment.stationId ?? '').trim())
+    .filter(Boolean);
+}
+
+function hasExplicitLastStationForLine(lineId) {
+  const assignedStationIds = getAssignedStationIdsForLine(lineId);
+  return assignedStationIds.some((stationId) => getStationById(stationId)?.lastStation === true);
+}
+
+function getExplicitLastStationIdsForLine(lineId) {
+  return getAssignedStationIdsForLine(lineId)
+    .filter((stationId) => hasManualLastPreference(stationId));
+}
+
+function getEffectiveLastStationForLine(lineId) {
+  const assignedStationIds = getAssignedStationIdsForLine(lineId);
+  if (!assignedStationIds.length) {
+    return { stationId: '', source: '' };
+  }
+
+  const explicitLastStationIds = getExplicitLastStationIdsForLine(lineId);
+  if (explicitLastStationIds.length > 0) {
+    return {
+      stationId: explicitLastStationIds[explicitLastStationIds.length - 1] || '',
+      source: 'manual'
+    };
+  }
+
+  return {
+    stationId: assignedStationIds[assignedStationIds.length - 1] || '',
+    source: 'auto'
+  };
+}
+
+function getEffectiveLastStationIdForLine(lineId) {
+  return getEffectiveLastStationForLine(lineId).stationId;
+}
+
+function getLinesWhereStationIsEffectiveLast(stationId) {
+  const needle = String(stationId ?? '').trim();
+  if (!needle) return [];
+
+  const uniqueLineIds = Array.from(new Set(
+    assignments
+      .map((assignment) => String(assignment.lineId ?? '').trim())
+      .filter(Boolean)
+  ));
+
+  return uniqueLineIds.filter((lineId) => getEffectiveLastStationIdForLine(lineId) === needle);
+}
+
+function getLastSourceVisuals(source) {
+  if (source === 'manual') {
+    return {
+      short: tr('lastSourceManualShort'),
+      label: tr('lastSourceManual')
+    };
+  }
+  return {
+    short: '',
+    label: ''
+  };
+}
+
+function getLastSourceMarkerMarkup(source) {
+  return '';
+}
+
+function getStationLastBadgeMarkup(stationOrId, lineId = null) {
+  const station = typeof stationOrId === 'string' ? getStationById(stationOrId) : stationOrId;
+  if (!station) return '';
+
+  const stationId = String(station.id ?? stationOrId ?? '').trim();
+  const effectiveLast = lineId ? getEffectiveLastStationForLine(lineId) : { stationId: '', source: '' };
+  const topSource = stationLastSourceMap.get(stationId) || (hasManualLastPreference(station) ? 'manual' : (station.lastStation ? 'auto' : ''));
+  const isLastStation = lineId ? stationId === effectiveLast.stationId : station.lastStation === true;
+  const source = lineId ? (isLastStation ? effectiveLast.source : '') : (isLastStation ? topSource : '');
+  if (!isLastStation) return '';
+
+  return `<span class="station-flag-badge station-flag-last" title="${tr('lastStation')}">LAST</span>${getLastSourceMarkerMarkup(source)}`;
+}
+
+function getStationFlagBadgesMarkup(stationOrId, lineId = null) {
+  const station = typeof stationOrId === 'string' ? getStationById(stationOrId) : stationOrId;
+  if (!station) return '';
+
+  const badges = [];
+  if (station.bottleneck) {
+    badges.push(`<span class="station-flag-badge station-flag-bottleneck" title="${tr('bottleneck')}">BN</span>`);
+  }
+  badges.push(getStationLastBadgeMarkup(station, lineId));
+  return badges.join('');
+}
+
+function getStationOptionSuffix(stationOrId, lineId = null) {
+  const station = typeof stationOrId === 'string' ? getStationById(stationOrId) : stationOrId;
+  if (!station) return '';
+
+  const stationId = String(station.id ?? stationOrId ?? '').trim();
+  const effectiveLast = lineId ? getEffectiveLastStationForLine(lineId) : { stationId: '', source: '' };
+  const topSource = stationLastSourceMap.get(stationId) || (hasManualLastPreference(station) ? 'manual' : (station.lastStation ? 'auto' : ''));
+  const isLastStation = lineId ? stationId === effectiveLast.stationId : station.lastStation === true;
+  const source = lineId ? (isLastStation ? effectiveLast.source : '') : (isLastStation ? topSource : '');
+
+  const tags = [];
+  if (station.bottleneck) tags.push('BN');
+  if (isLastStation) tags.push('LAST');
+  return tags.length ? ` [${tags.join('|')}]` : '';
+}
+
+function getStationFlagLegendMarkup() {
+  return `
+    <div class="station-flag-legend mb-2">
+      <span class="station-flag-legend-title">${tr('stationFlagsLabel')}:</span>
+      <span class="station-flag-badge station-flag-bottleneck" title="${tr('bottleneck')}">BN</span>
+      <span class="station-flag-legend-text">${tr('bottleneck')}</span>
+      <span class="station-flag-badge station-flag-last" title="${tr('lastStation')}">LAST</span>
+      <span class="station-flag-legend-text">${tr('lastStation')}</span>
+    </div>
+  `.trim();
+}
 // ----------- 1. Stations --------
 function renderStations() {
     const table = document.getElementById('stationTable');
@@ -5050,10 +5876,10 @@ function renderStations() {
         : station.description}</td>
           <td style="text-align:center;">${stationsEditMode
         ? `<input type="checkbox" ${station.bottleneck ? 'checked' : ''} onchange="updateStationField(${idx},'bottleneck',this.checked)">`
-        : (station.bottleneck ? tr('yesLabel') : tr('noLabel'))}</td>
+        : (station.bottleneck ? `<span class="station-flag-badge station-flag-bottleneck" title="${tr('bottleneck')}">BN</span>` : '<span class="station-flag-muted">-</span>')}</td>
           <td style="text-align:center;">${stationsEditMode
-        ? `<input type="checkbox" ${station.lastStation ? 'checked' : ''} onchange="updateStationField(${idx},'lastStation',this.checked)">`
-        : (station.lastStation ? tr('yesLabel') : tr('noLabel'))}</td>
+        ? `<input type="checkbox" ${hasManualLastPreference(station) ? 'checked' : ''} onchange="updateStationField(${idx},'lastStation',this.checked)">`
+        : (station.lastStation ? getStationLastBadgeMarkup(station) : '<span class="station-flag-muted">-</span>')}</td>
           <td>${stationsEditMode
         ? `<input class="form-control form-control-sm" type="number" min="0" value="${station.cycleTime ?? ''}" onchange="updateStationField(${idx},'cycleTime',this.value === '' ? null : Number(this.value))">`
         : (station.cycleTime != null ? station.cycleTime : '')}</td>
@@ -5087,12 +5913,12 @@ function addStation() {
     const cycleTimeInput = document.getElementById("sCycleTime").value.trim();
     const cycleTime = cycleTimeInput === '' ? null : Number(cycleTimeInput);
     if (!id || !desc)
-      return alert("ID and description required!");
+      return alert(tr('idAndDescriptionRequired'));
     if (cycleTimeInput !== '' && Number.isNaN(cycleTime))
-      return alert("Cycle time must be a valid number!");
+      return alert(tr('cycleTimeInvalid'));
     if (stations.some(s => s.id === id))
-      return alert("Station ID already exists!");
-    stations.push({ id, description: desc, bottleneck, lastStation, cycleTime });
+      return alert(tr('stationIdExists'));
+    stations.push({ id, description: desc, bottleneck, lastStation, lastStationManual: lastStation, cycleTime });
     renderStations();
     document.getElementById("sId").value = "";
     document.getElementById("sDesc").value = "";
@@ -5105,11 +5931,30 @@ function deleteStation(id) {
     renderStations();
 }
 function updateStationField(idx, field, value) {
+    if (field === 'lastStation' && value === false) {
+      const station = stations[idx];
+      const stationId = String(station?.id ?? '').trim();
+      const dependentLines = getLinesWhereStationIsEffectiveLast(stationId);
+      if (dependentLines.length > 0) {
+        alert(`${tr('lastStationDependencyBlocked')} ${dependentLines.join(', ')}. ${tr('lastStationDependencyHint')}`);
+        return;
+      }
+    }
     stations[idx][field] = value;
+    if (field === 'lastStation') {
+      stations[idx].lastStationManual = value === true;
+    }
 }
 function showStations() { stationsEditMode = false; renderStations(); }
 function editStations() { stationsEditMode = true; renderStations(); }
-function saveStationsEdit() { stationsEditMode = false; renderStations(); }
+function saveStationsEdit() {
+    stationsEditMode = false;
+    syncLastStationFlagsFromAssignments();
+    renderStations();
+    if (typeof renderAssignmentsList === 'function') {
+      renderAssignmentsList();
+    }
+}
 function resetStations() {
     stations = [];
     stationsEditMode = true;
@@ -5148,7 +5993,7 @@ function renderLines() {
         : line.description}</td>
           <td>${linesEditMode
         ? `<select class="form-select form-select-sm" onchange="updateLineField(${idx},'shapeType',this.value)">
-                ${['I-shape','L-shape','U-shape','O-shape','S-shape','T-shape','Cell-shape'].map((shape) => `<option value="${shape}" ${(normalizeLineShapeType(line.shapeType) === shape) ? 'selected' : ''}>${getLineShapeOptionLabel(shape)}</option>`).join('')}
+                ${['I-shape','L-shape','U-shape','O-shape','S-shape','T-shape','Cell-shape','Modular-zones-shape'].map((shape) => `<option value="${shape}" ${(normalizeLineShapeType(line.shapeType) === shape) ? 'selected' : ''}>${getLineShapeOptionLabel(shape)}</option>`).join('')}
               </select>`
         : normalizeLineShapeType(line.shapeType)}</td>
           <td>${getLineShapePreviewMarkup(line.shapeType)}</td>
@@ -5165,7 +6010,7 @@ function renderLines() {
         <td><input id="lDesc" type="text" class="form-control form-control-sm"></td>
         <td>
           <select id="lShape" class="form-select form-select-sm" onchange="updateNewLineShapePreview(this.value)">
-            ${['I-shape','L-shape','U-shape','O-shape','S-shape','T-shape','Cell-shape'].map((shape) => `<option value="${shape}">${getLineShapeOptionLabel(shape)}</option>`).join('')}
+            ${['I-shape','L-shape','U-shape','O-shape','S-shape','T-shape','Cell-shape','Modular-zones-shape'].map((shape) => `<option value="${shape}">${getLineShapeOptionLabel(shape)}</option>`).join('')}
           </select>
         </td>
         <td id="newLineShapePreview">${getLineShapePreviewMarkup('I-shape')}</td>
@@ -5180,9 +6025,9 @@ function addLine() {
     const desc = document.getElementById("lDesc").value.trim();
   const shapeType = normalizeLineShapeType(document.getElementById("lShape")?.value || 'I-shape');
     if (!id || !desc)
-      return alert("ID and description required!");
+      return alert(tr('idAndDescriptionRequired'));
     if (lines.some(l => l.id === id))
-      return alert("Line ID already exists!");
+      return alert(tr('lineIdExists'));
     lines.push({ id, description: desc, shapeType });
     renderLines();
     document.getElementById("lId").value = "";
@@ -5209,6 +6054,10 @@ window.saveLinesEdit = () => { linesEditMode = false; renderLines(); };
 window.resetLines = () => { lines = []; linesEditMode = true; renderLines(); };
 // ----------- 3. Assignments --------
 function renderAssignments() {
+    syncLastStationFlagsFromAssignments();
+    if (typeof renderStations === 'function') {
+      renderStations();
+    }
     const table = document.getElementById('assignTable');
     if (!table)
         return;
@@ -5232,9 +6081,9 @@ function renderAssignments() {
             : a.lineId}</td>
           <td>${assignmentsEditMode
             ? `<select class="form-select form-select-sm" onchange="updateAssignmentField(${idx},'stationId',this.value)">
-                ${stations.map(s => `<option value="${s.id}" ${a.stationId === s.id ? "selected" : ""}>${s.id}</option>`).join("")}
+                ${stations.map(s => `<option value="${s.id}" ${a.stationId === s.id ? "selected" : ""}>${s.id}${getStationOptionSuffix(s, String(a.lineId ?? '').trim())}</option>`).join("")}
               </select>`
-            : a.stationId}</td>
+            : `${a.stationId} ${getStationFlagBadgesMarkup(String(a.stationId ?? '').trim(), String(a.lineId ?? '').trim())}`}</td>
           <td>
             ${assignmentsEditMode
             ? `<button class="btn btn-danger btn-sm" onclick="deleteAssignment(${idx})">${tr('deleteLabel')}</button>`
@@ -5251,7 +6100,7 @@ function renderAssignments() {
         </td>
         <td>
           <select id="aStation" class="form-select form-select-sm">
-            ${stations.length === 0 ? `<option disabled selected>${tr('noStationAvailable')}</option>` : stations.map(s => `<option value="${s.id}">${s.id}</option>`).join("")}
+            ${stations.length === 0 ? `<option disabled selected>${tr('noStationAvailable')}</option>` : stations.map(s => `<option value="${s.id}">${s.id}${getStationOptionSuffix(s)}</option>`).join("")}
           </select>
         </td>
         <td><button class="btn btn-primary btn-sm" onclick="addAssignment()">${tr('addLabel')}</button></td>
@@ -5265,9 +6114,9 @@ function addAssignment() {
     const lineId = (_a = document.getElementById("aLine")) === null || _a === void 0 ? void 0 : _a.value;
     const stationId = (_b = document.getElementById("aStation")) === null || _b === void 0 ? void 0 : _b.value;
     if (!lineId || !stationId)
-      return alert("Please select line and station!");
+      return alert(tr('selectLineAndStation'));
     if (assignments.some(a => a.lineId === lineId && a.stationId === stationId))
-      return alert("This assignment already exists!");
+      return alert(tr('assignmentAlreadyExists'));
     assignments.push({ lineId, stationId });
     renderAssignments();
 }
@@ -5353,9 +6202,9 @@ function addTE() {
     const desc = document.getElementById("teDesc").value.trim();
     const prod = document.getElementById("teProd").checked ? 1 : 0;
     if (!id || !desc)
-      return alert("ID and description required!");
+      return alert(tr('idAndDescriptionRequired'));
     if (timeEvents.some(te => te.id === id))
-      return alert("ID already exists!");
+      return alert(tr('idAlreadyExists'));
     timeEvents.push({ id, description: desc, productive: prod });
     renderTEs();
     document.getElementById("teId").value = "";
@@ -5499,7 +6348,7 @@ function renderWPs() {
           <td>
             ${weekPlansEditMode
               ? `<select class="form-select form-select-sm" onchange="updateWPField(${idx},'timeevent',this.value)">`
-                + `<option value=""></option>`
+                + `<option value="">${tr('dropdownSelect')}</option>`
                 + timeEvents.map(te => `<option value="${te.id}" ${wp.timeevent === te.id ? 'selected' : ''}>${te.id} - ${te.description}</option>`).join('')
                 + `</select>`
               : (wp.timeevent ? wp.timeevent : '')}
@@ -5525,7 +6374,7 @@ function renderWPs() {
         <td style="text-align:center;"><input id="wpProd" type="checkbox" checked></td>
         <td>
           <select id="wpTimeevent" class="form-select form-select-sm" onchange="applyTimeEventToWPForm()">
-            <option value=""></option>
+            <option value="">${tr('dropdownSelect')}</option>
             ${timeEvents.map(te => `<option value="${te.id}">${te.id} - ${te.description}</option>`).join('')}
           </select>
         </td>
@@ -5645,10 +6494,10 @@ function addWP() {
     if (!name) {
       if (nameInput)
         nameInput.classList.add('is-invalid');
-      return alert("Shift Modell Name required!");
+      return alert(tr('shiftModellNameRequiredAlert'));
     }
     if (!day || !shift || !start || !end)
-      return alert("All fields required!");
+      return alert(tr('allFieldsRequired'));
     weekPlans.push({ name, day, shift, start, end, duration, productive: prod, timeevent });
     window.saveWeekPlanSet();
     renderWPs();
@@ -5681,14 +6530,14 @@ function saveWPsEdit() {
     if (!modelName) {
       if (nameInput)
         nameInput.classList.add('is-invalid');
-      alert('Please provide a Shift Modell Name.');
+      alert(tr('shiftModellNamePleaseProvide'));
       return;
     }
 
     window.saveWeekPlanSet();
     weekPlansEditMode = false;
     renderWPs();
-    alert('Shift Modell saved successfully.');
+    alert(tr('shiftModellSavedSuccess'));
 }
 function resetWPs() {
     const existingName = (document.getElementById('wpSetName')?.value || '').trim();
@@ -5734,9 +6583,9 @@ function renderSSs() {
     table.innerHTML = `
     <thead>
       <tr>
-        <th>ID</th>
-        <th>Description</th>
-        <th>Action</th>
+        <th>${tr('idLabel')}</th>
+        <th>${tr('description')}</th>
+        <th>${tr('action')}</th>
       </tr>
     </thead>
     <tbody>
@@ -5750,7 +6599,7 @@ function renderSSs() {
         : ss.description}</td>
           <td>
             ${shiftSchedulesEditMode
-        ? `<button class="btn btn-danger btn-sm" onclick="deleteSS(${idx})">Delete</button>`
+        ? `<button class="btn btn-danger btn-sm" onclick="deleteSS(${idx})">${tr('deleteLabel')}</button>`
         : ""}
           </td>
         </tr>
@@ -5763,11 +6612,11 @@ function renderSSs() {
         <td>
           <input id="ssDesc" type="text" class="form-control form-control-sm">
           <select id="ssWeekplanSelect" class="form-select form-select-sm mt-1" onchange="window.setSSFromWeekplan && window.setSSFromWeekplan()">
-            <option value="">-- Select weekplan --</option>
+            <option value="">${tr('selectShiftModell')}</option>
             ${weekPlanSets.map((wps, idx) => `<option value="${idx}">${wps.name}</option>`).join('')}
           </select>
         </td>
-        <td><button class="btn btn-primary btn-sm" onclick="addSS()">Add</button></td>
+        <td><button class="btn btn-primary btn-sm" onclick="addSS()">${tr('addLabel')}</button></td>
       </tr>
       ` : ""}
     </tbody>
@@ -5788,9 +6637,9 @@ function addSS() {
     const id = document.getElementById("ssId").value.trim();
     const desc = document.getElementById("ssDesc").value.trim();
     if (!id || !desc)
-      return alert("ID and description required!");
+      return alert(tr('idAndDescriptionRequired'));
     if (shiftSchedules.some(ss => ss.id === id))
-      return alert("ID already exists!");
+      return alert(tr('idAlreadyExists'));
     shiftSchedules.push({ id, description: desc });
     renderSSs();
     document.getElementById("ssId").value = "";
@@ -5846,7 +6695,7 @@ function exportExcel(type) {
     else if (type === "weekPlans") {
         // Export all saved Shift Modells (weekPlanSets) as separate sheets
         if (!Array.isArray(weekPlanSets) || weekPlanSets.length === 0) {
-          alert('No Shift Modells to export!');
+          alert(tr('noShiftModellsToExport'));
           return;
         }
         const wb = XLSX.utils.book_new();
@@ -5868,7 +6717,7 @@ function exportExcel(type) {
           anyData = true;
         });
         if (!anyData) {
-          alert('No Shift Modells with entries to export!');
+          alert(tr('noShiftModellsWithEntriesToExport'));
           return;
         }
         const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
@@ -5877,7 +6726,7 @@ function exportExcel(type) {
     }
     else if (type === "shiftSchedules") {
         if (!Array.isArray(shiftAssignmentRecords) || shiftAssignmentRecords.length === 0) {
-          alert("No shift assignments to export!");
+          alert(tr('noShiftAssignmentsToExport'));
           return;
         }
         data = shiftAssignmentRecords.map((r) => ({
@@ -5895,11 +6744,11 @@ function exportExcel(type) {
         filename = "shiftAssignments.xlsx";
     }
     else {
-      alert("Unknown export type!");
+      alert(tr('unknownExportType'));
       return;
     }
     if (data.length === 0) {
-      alert("No data to export!");
+      alert(tr('noDataToExport'));
       return;
     }
     const ws = XLSX.utils.json_to_sheet(data);
@@ -6647,52 +7496,121 @@ let assignModal = null;
 let assignStationsSelect = null;
 let assignLineSelect = null;
 let assignedStationsSelect = null;
+let assignShapePreviewHost = null;
+let assignShapeMiniApp = null;
+let assignSelectedAssignedStationIds = new Set();
+let assignDragSourceStationId = '';
+
+function getAssignmentsForLine(lineId) {
+  const normalizedLineId = String(lineId ?? '').trim();
+  if (!normalizedLineId) return [];
+  return assignments
+    .filter((assignment) => String(assignment.lineId ?? '').trim() === normalizedLineId)
+    .map((assignment) => String(assignment.stationId ?? '').trim())
+    .filter(Boolean);
+}
+
+function replaceAssignmentsForLine(lineId, orderedStationIds) {
+  const normalizedLineId = String(lineId ?? '').trim();
+  if (!normalizedLineId) return;
+  const cleaned = orderedStationIds
+    .map((stationId) => String(stationId ?? '').trim())
+    .filter(Boolean);
+  assignments = assignments.filter((assignment) => String(assignment.lineId ?? '').trim() !== normalizedLineId);
+  cleaned.forEach((stationId) => {
+    assignments.push({ lineId: normalizedLineId, stationId });
+  });
+}
+
+function renderAssignShapeMiniApp() {
+  if (!assignLineSelect) return;
+  const lineId = String(assignLineSelect.value ?? '').trim();
+  const assignedStationIds = getAssignmentsForLine(lineId);
+
+  if (assignShapePreviewHost) {
+    const line = lines.find((entry) => String(entry.id ?? '').trim() === lineId);
+    assignShapePreviewHost.innerHTML = line ? getLineShapePreviewMarkup(line.shapeType) : '';
+  }
+
+  if (!assignShapeMiniApp) return;
+  if (!assignedStationIds.length) {
+    assignShapeMiniApp.innerHTML = `<div class="text-muted">${tr('shapeMiniAppEmpty')}</div>`;
+    return;
+  }
+
+  assignShapeMiniApp.innerHTML = assignedStationIds.map((stationId) => {
+    const station = getStationById(stationId);
+    const description = String(station?.description || '').trim();
+    const selectedClass = assignSelectedAssignedStationIds.has(stationId) ? ' selected' : '';
+    return `
+      <div class="assign-shape-card${selectedClass}" draggable="true"
+        onclick="assignShapeToggleSelect('${stationId}')"
+        ondragstart="assignShapeDragStart(event,'${stationId}')"
+        ondragover="assignShapeDragOver(event)"
+        ondragleave="assignShapeDragLeave(event)"
+        ondrop="assignShapeDrop(event,'${stationId}')">
+        <span class="assign-shape-card-id">${stationId} ${getStationFlagBadgesMarkup(stationId, lineId)}</span>
+        <span class="assign-shape-card-desc">${description}</span>
+      </div>
+    `;
+  }).join('');
+}
 function renderAssignmentsList() {
+  syncLastStationFlagsFromAssignments();
+  if (typeof renderStations === 'function') {
+    renderStations();
+  }
   const container = document.getElementById('assignmentsList');
   if (!container) return;
   if (assignments.length === 0) {
-    container.innerHTML = `<div class="text-muted">${tr('noAssignmentsYet')}</div>`;
+    container.innerHTML = `${getStationFlagLegendMarkup()}<div class="text-muted">${tr('noAssignmentsYet')}</div>`;
     return;
   }
   // Group by line
   const grouped = {};
   assignments.forEach(a => {
-    if (!grouped[a.lineId]) grouped[a.lineId] = [];
-    grouped[a.lineId].push(a.stationId);
+    const normalizedLineId = String(a.lineId ?? '').trim();
+    const normalizedStationId = String(a.stationId ?? '').trim();
+    if (!normalizedLineId || !normalizedStationId) return;
+    if (!grouped[normalizedLineId]) grouped[normalizedLineId] = [];
+    grouped[normalizedLineId].push(normalizedStationId);
   });
-  container.innerHTML = Object.keys(grouped).map(lineId => `
+  container.innerHTML = `${getStationFlagLegendMarkup()}${Object.keys(grouped).map(lineId => `
     <div class="mb-2">
       <b class="assignment-line-id">${lineId}</b>:
       ${grouped[lineId].map(stId => `
         <span class="badge bg-secondary me-1">
-          ${stId}
+          ${stId} ${getStationFlagBadgesMarkup(stId, lineId)}
           <button class="btn btn-sm btn-danger ms-1 py-0 px-1" style="font-size:0.8em;" title="Remove"
             onclick="deleteAssignmentByLineStation('${lineId}','${stId}')">&times;</button>
         </span>
       `).join('')}
     </div>
-  `).join('');
+  `).join('')}`;
 }
 function openAssignDialog() {
   assignModal = document.getElementById('assignModal');
   assignStationsSelect = document.getElementById('assignStationsSelect');
   assignLineSelect = document.getElementById('assignLineSelect');
   assignedStationsSelect = document.getElementById('assignedStationsSelect');
+  assignShapePreviewHost = document.getElementById('assignShapePreviewHost');
+  assignShapeMiniApp = document.getElementById('assignShapeMiniApp');
+  assignSelectedAssignedStationIds = new Set();
   if (!assignModal || !assignStationsSelect || !assignLineSelect || !assignedStationsSelect)
     return;
   if (!lines.length) {
-    alert('No line available');
+    alert(tr('noLineAvailable'));
     return;
   }
   if (!stations.length) {
-    alert('No station available');
+    alert(tr('noStationAvailable'));
     return;
   }
   // Fill Lines
   assignLineSelect.innerHTML = lines.map(l => `<option value="${l.id}">${l.id}</option>`).join('');
   assignLineSelect.onchange = updateAssignedStationsList;
   // Fill Stations
-  assignStationsSelect.innerHTML = stations.map(s => `<option value="${s.id}">${s.id} - ${s.description}</option>`).join('');
+  assignStationsSelect.innerHTML = stations.map(s => `<option value="${s.id}">${s.id}${getStationOptionSuffix(s)} - ${s.description}</option>`).join('');
   // Fill Assigned Stations
   updateAssignedStationsList();
   // Show Modal
@@ -6700,7 +7618,7 @@ function openAssignDialog() {
   assignModal.classList.add("show");
   assignModal.setAttribute("aria-modal", "true");
   assignModal.removeAttribute("aria-hidden");
-  document.body.style.overflow = "hidden";
+  syncGlobalModalState();
 }
 function closeAssignDialog() {
   if (!assignModal)
@@ -6708,34 +7626,40 @@ function closeAssignDialog() {
   assignModal.style.display = "none";
   assignModal.classList.remove("show");
   assignModal.setAttribute("aria-hidden", "true");
-  document.body.style.overflow = "";
+  syncGlobalModalState();
+  assignSelectedAssignedStationIds.clear();
+  assignDragSourceStationId = '';
 }
 function updateAssignedStationsList() {
   if (!assignLineSelect || !assignedStationsSelect)
     return;
-  const lineId = assignLineSelect.value;
-  const assigned = assignments.filter(a => a.lineId === lineId).map(a => a.stationId);
+  const lineId = String(assignLineSelect.value ?? '').trim();
+  const assigned = getAssignmentsForLine(lineId);
   assignedStationsSelect.innerHTML = assigned.map(stId => {
-    const st = stations.find(s => s.id === stId);
-    return `<option value="${stId}">${stId}${st ? ' - ' + st.description : ''}</option>`;
+    const st = getStationById(stId);
+    return `<option value="${stId}">${stId}${getStationOptionSuffix(st, lineId)}${st ? ' - ' + st.description : ''}</option>`;
   }).join('');
+  assignSelectedAssignedStationIds = new Set(
+    Array.from(assignSelectedAssignedStationIds).filter((stationId) => assigned.includes(stationId))
+  );
+  renderAssignShapeMiniApp();
 }
 function assignSelectedStations() {
   if (!assignLineSelect || !assignStationsSelect)
     return;
-  const lineId = assignLineSelect.value;
+  const lineId = String(assignLineSelect.value ?? '').trim();
   if (!lineId) {
-    alert('Please select a line first.');
+    alert(tr('selectLineFirst'));
     return;
   }
-  const selectedStations = Array.from(assignStationsSelect.selectedOptions).map(opt => opt.value);
+  const selectedStations = Array.from(assignStationsSelect.selectedOptions).map(opt => String(opt.value ?? '').trim());
   if (!selectedStations.length) {
-    alert('Please select at least one station.');
+    alert(tr('selectAtLeastOneStation'));
     return;
   }
   let changed = false;
   selectedStations.forEach(stId => {
-    if (!assignments.some(a => a.lineId === lineId && a.stationId === stId)) {
+    if (!assignments.some(a => String(a.lineId ?? '').trim() === lineId && String(a.stationId ?? '').trim() === stId)) {
       assignments.push({ lineId, stationId: stId });
       changed = true;
     }
@@ -6748,18 +7672,93 @@ function assignSelectedStations() {
 function removeSelectedStations() {
   if (!assignLineSelect || !assignedStationsSelect)
     return;
-  const lineId = assignLineSelect.value;
-  const selectedStations = Array.from(assignedStationsSelect.selectedOptions).map(opt => opt.value);
-  assignments = assignments.filter(a => !(a.lineId === lineId && selectedStations.includes(a.stationId)));
+  const lineId = String(assignLineSelect.value ?? '').trim();
+  const selectedStations = assignSelectedAssignedStationIds.size
+    ? Array.from(assignSelectedAssignedStationIds)
+    : Array.from(assignedStationsSelect.selectedOptions).map(opt => String(opt.value ?? '').trim());
+  if (!selectedStations.length) {
+    return;
+  }
+  assignments = assignments.filter(a => {
+    const assignmentLineId = String(a.lineId ?? '').trim();
+    const assignmentStationId = String(a.stationId ?? '').trim();
+    return !(assignmentLineId === lineId && selectedStations.includes(assignmentStationId));
+  });
+  assignSelectedAssignedStationIds.clear();
   updateAssignedStationsList();
   renderAssignmentsList();
 }
+
+window.assignShapeToggleSelect = function(stationId) {
+  const normalizedStationId = String(stationId ?? '').trim();
+  if (!normalizedStationId) return;
+  if (assignSelectedAssignedStationIds.has(normalizedStationId)) {
+    assignSelectedAssignedStationIds.delete(normalizedStationId);
+  } else {
+    assignSelectedAssignedStationIds.add(normalizedStationId);
+  }
+  renderAssignShapeMiniApp();
+};
+
+window.assignShapeDragStart = function(event, stationId) {
+  assignDragSourceStationId = String(stationId ?? '').trim();
+  try {
+    if (event?.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', assignDragSourceStationId);
+    }
+  } catch (_) {
+    // Ignore drag payload failures.
+  }
+};
+
+window.assignShapeDragOver = function(event) {
+  if (event) event.preventDefault();
+  const card = event?.currentTarget;
+  if (card?.classList) card.classList.add('drag-over');
+};
+
+window.assignShapeDragLeave = function(event) {
+  const card = event?.currentTarget;
+  if (card?.classList) card.classList.remove('drag-over');
+};
+
+window.assignShapeDrop = function(event, targetStationId) {
+  if (event) event.preventDefault();
+  const card = event?.currentTarget;
+  if (card?.classList) card.classList.remove('drag-over');
+
+  if (!assignLineSelect) return;
+  const lineId = String(assignLineSelect.value ?? '').trim();
+  const targetId = String(targetStationId ?? '').trim();
+  const sourceId = String(assignDragSourceStationId || '').trim();
+  if (!lineId || !sourceId || !targetId || sourceId === targetId) return;
+
+  const ordered = getAssignmentsForLine(lineId);
+  const sourceIndex = ordered.indexOf(sourceId);
+  const targetIndex = ordered.indexOf(targetId);
+  if (sourceIndex < 0 || targetIndex < 0) return;
+
+  const [moved] = ordered.splice(sourceIndex, 1);
+  const insertIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+  ordered.splice(insertIndex, 0, moved);
+  replaceAssignmentsForLine(lineId, ordered);
+
+  syncLastStationFlagsFromAssignments();
+  updateAssignedStationsList();
+  renderAssignmentsList();
+  if (typeof renderStations === 'function') {
+    renderStations();
+  }
+};
 function saveAssignmentsDialog() {
   closeAssignDialog();
   renderAssignmentsList();
 }
 window.deleteAssignmentByLineStation = function(lineId, stationId) {
-  assignments = assignments.filter(a => !(a.lineId === lineId && a.stationId === stationId));
+  const normalizedLineId = String(lineId ?? '').trim();
+  const normalizedStationId = String(stationId ?? '').trim();
+  assignments = assignments.filter(a => !(String(a.lineId ?? '').trim() === normalizedLineId && String(a.stationId ?? '').trim() === normalizedStationId));
   renderAssignmentsList();
   renderAssignments && renderAssignments();
 };
@@ -6781,10 +7780,46 @@ window.assignSelectedStations = assignSelectedStations;
 window.removeSelectedStations = removeSelectedStations;
 window.saveAssignmentsDialog = saveAssignmentsDialog;
 window.renderAssignmentsList = renderAssignmentsList;
+
+function setupMainSectionCollapsibles() {
+  const sections = document.querySelectorAll('.main-content .section');
+  sections.forEach((section, index) => {
+    if (section.querySelector(':scope > details.section-collapsible')) {
+      return;
+    }
+    const children = Array.from(section.children);
+    const heading = children.find((child) => child.tagName === 'H2');
+    if (!heading) {
+      return;
+    }
+
+    const details = document.createElement('details');
+    details.className = 'section-collapsible';
+    details.open = index === 0;
+
+    const summary = document.createElement('summary');
+    summary.appendChild(heading);
+
+    const body = document.createElement('div');
+    body.className = 'section-collapsible-body';
+    children.forEach((child) => {
+      if (child !== heading) {
+        body.appendChild(child);
+      }
+    });
+
+    details.appendChild(summary);
+    details.appendChild(body);
+    section.replaceChildren(details);
+  });
+}
 // ----------- Initial Render vereinheitlicht -----------
 window.onload = () => {
+  setupMainSectionCollapsibles();
   initTheme();
   currentLang = getLanguage();
+  runLanguageSyncAudit('startup');
+  initLanguageSyncObserver();
   syncAuthInputs();
   mqttExplorerEnsureProfileCollectionInitialized();
   mqttExplorerLoadProfileFromStorage();

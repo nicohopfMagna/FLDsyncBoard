@@ -6,6 +6,9 @@ const { createLogger } = require('./logger');
 const mqttLogger = createLogger({ service: 'mqtt' });
 
 const MQTT_ENABLED = String(process.env.MQTT_ENABLED || 'true').toLowerCase() === 'true';
+const MQTT_BASE_TOPIC = String(process.env.MQTT_BASE_TOPIC || 'm/den/fldsyncboard')
+  .trim()
+  .replace(/\/+$/, '');
 const options = {
   host: process.env.MQTT_HOST || 'den-plant1-uns.magna.global',
   port: Number(process.env.MQTT_PORT || 8883),
@@ -59,7 +62,7 @@ if (client) {
     mqttLogger.error('mqtt.error', { error });
   });
 } else {
-  mqttLogger.warn('mqtt.disabled');
+  mqttLogger.info('mqtt.disabled');
 }
 
 function publishMasterdata(type, data) {
@@ -77,4 +80,47 @@ function publishMasterdata(type, data) {
   });
 }
 
-module.exports = { publishMasterdata };
+function normalizeTopicSegment(value, fallback = 'unknown') {
+  const text = String(value || '').trim();
+  if (!text) return fallback;
+  return text.replace(/[\s#\+]+/g, '_').replace(/^\/+|\/+$/g, '') || fallback;
+}
+
+function buildStationDataChangeTopic(stationId) {
+  return `${MQTT_BASE_TOPIC}/${normalizeTopicSegment(stationId)}`;
+}
+
+function publishDataChangeEvent({ stationId, endpoint, payload, context = {} }) {
+  if (!client) {
+    return;
+  }
+
+  const topic = buildStationDataChangeTopic(stationId);
+  const eventPayload = {
+    eventType: 'DataChange',
+    eventVersion: '1.0',
+    timestamp: new Date().toISOString(),
+    endpoint: String(endpoint || '').trim(),
+    stationId: String(stationId || '').trim(),
+    source: 'fld-syncboard',
+    context: {
+      lineId: String(context.lineId || '').trim(),
+      reason: String(context.reason || '').trim(),
+      action: String(context.action || '').trim()
+    },
+    payload
+  };
+
+  client.publish(topic, JSON.stringify(eventPayload), (error) => {
+    if (error) {
+      mqttLogger.error('mqtt.publish_datachange.failed', {
+        topic,
+        endpoint: eventPayload.endpoint,
+        stationId: eventPayload.stationId,
+        error
+      });
+    }
+  });
+}
+
+module.exports = { publishMasterdata, publishDataChangeEvent, buildStationDataChangeTopic };

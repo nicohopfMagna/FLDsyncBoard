@@ -27,6 +27,9 @@
       --input-bg: #232b39;
       --input-border: #36d1c4;
       --badge-bg: #3d485f;
+      --terminal-bg: rgba(7, 15, 26, 0.84);
+      --terminal-text: #e8f1ff;
+      --terminal-border: color-mix(in srgb, var(--panel-border) 62%, var(--accent-cyan) 38%);
       --border-radius: 0.5rem;
       --header-height: 56px;
     }
@@ -50,6 +53,9 @@
       --input-bg: #ffffff;
       --input-border: #9fb3c8;
       --badge-bg: #d7e1eb;
+      --terminal-bg: #f7fbff;
+      --terminal-text: #10233a;
+      --terminal-border: #95abc1;
     }
     body {
       min-height: 100vh;
@@ -68,6 +74,7 @@
       margin-bottom: 0;
       border-bottom: 1px solid var(--header-border);
       justify-content: space-between;
+      position: relative;
     }
     .header .logo-left {
       height: 36px;
@@ -77,7 +84,7 @@
       margin-left: 1.5rem;
     }
     .header h1 {
-      flex: 1;
+      flex: 0;
       font-weight: 700;
     }
     .header-title {
@@ -85,6 +92,11 @@
       margin: 0;
       font-size: 1.6rem;
       line-height: 1;
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      pointer-events: none;
     }
     .header-actions {
       display: flex;
@@ -137,6 +149,38 @@
       font-size: 1.1rem;
       color: var(--accent-grey);
       font-weight: 500;
+    }
+    .section-collapsible {
+      background: transparent;
+      border: 0;
+      margin: 0;
+      padding: 0;
+    }
+    .section-collapsible > summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      user-select: none;
+    }
+    .section-collapsible > summary::-webkit-details-marker {
+      display: none;
+    }
+    .section-collapsible > summary::before {
+      content: '▸';
+      color: var(--accent-cyan);
+      transition: transform 0.15s ease;
+      font-size: 0.95rem;
+    }
+    .section-collapsible[open] > summary::before {
+      transform: rotate(90deg);
+    }
+    .section-collapsible > summary h2 {
+      margin: 0;
+    }
+    .section-collapsible-body {
+      padding-top: 0.75rem;
     }
     .btn-group .btn, .btn {
       border-radius: 1.5rem;
@@ -258,6 +302,54 @@
     .assignment-line-id {
       color: var(--accent-cyan);
     }
+    .station-flag-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 2.2rem;
+      padding: 0.08rem 0.45rem;
+      margin-left: 0.28rem;
+      border-radius: 999px;
+      font-size: 0.67rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      line-height: 1.25;
+      border: 1px solid transparent;
+      vertical-align: middle;
+    }
+    .station-flag-bottleneck {
+      color: #ffd9d9;
+      background: linear-gradient(135deg, rgba(203, 48, 48, 0.88), rgba(168, 26, 26, 0.88));
+      border-color: rgba(255, 179, 179, 0.65);
+      box-shadow: 0 0 0 1px rgba(255, 88, 88, 0.24);
+    }
+    .station-flag-last {
+      color: #fff3c6;
+      background: linear-gradient(135deg, rgba(189, 133, 22, 0.9), rgba(147, 96, 12, 0.9));
+      border-color: rgba(255, 220, 140, 0.7);
+      box-shadow: 0 0 0 1px rgba(255, 204, 74, 0.24);
+    }
+    .station-flag-muted {
+      color: color-mix(in srgb, var(--text-color) 58%, transparent);
+      font-weight: 600;
+    }
+    .station-flag-legend {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      color: color-mix(in srgb, var(--text-color) 86%, white 14%);
+      font-size: 0.84rem;
+    }
+    .station-flag-legend-title {
+      font-weight: 700;
+      margin-right: 0.2rem;
+      color: color-mix(in srgb, var(--text-color) 92%, white 8%);
+    }
+    .station-flag-legend-text {
+      margin-right: 0.5rem;
+      color: color-mix(in srgb, var(--text-color) 76%, white 24%);
+    }
     .badge.bg-secondary {
       background: var(--badge-bg) !important;
       color: var(--text-color);
@@ -314,6 +406,8 @@
       border-color: var(--accent-cyan);
       outline: none;
     }
+    body.modal-blur-open .header,
+    body.modal-blur-open .main-content,
     body.auth-modal-open .header,
     body.auth-modal-open .main-content {
       filter: blur(3px);
@@ -412,8 +506,9 @@
       z-index: 1;
     }
     .mes-terminal {
-      background: rgba(0,0,0,0.24);
-      border: 1px solid color-mix(in srgb, var(--panel-border) 70%, var(--accent-cyan) 30%);
+      background: var(--terminal-bg);
+      color: var(--terminal-text);
+      border: 1px solid var(--terminal-border);
       border-radius: 0.65rem;
       min-height: 170px;
       max-height: 330px;
@@ -421,6 +516,7 @@
       white-space: pre-wrap;
       font-family: Consolas, 'Cascadia Mono', 'Courier New', monospace;
       font-size: 0.87rem;
+      line-height: 1.45;
     }
     .mes-subgrid {
       display: grid;
@@ -436,12 +532,33 @@
       z-index: 1;
     }
     .mes-status {
-      color: var(--accent-grey);
+      color: color-mix(in srgb, var(--text-color) 90%, var(--accent-grey) 10%);
       font-size: 0.92rem;
       background: color-mix(in srgb, var(--panel-bg) 90%, var(--accent-cyan) 10%);
       border: 1px solid color-mix(in srgb, var(--panel-border) 70%, var(--accent-cyan) 30%);
       border-radius: 0.55rem;
       padding: 0.45rem 0.55rem;
+    }
+    #apiCatalogInputSelector details,
+    #apiCatalogOutputSelector details {
+      background: color-mix(in srgb, var(--panel-bg) 86%, var(--accent-cyan) 14%);
+      border-color: color-mix(in srgb, var(--panel-border) 58%, var(--accent-cyan) 42%) !important;
+      color: var(--text-color);
+    }
+    #apiCatalogInputSelector summary,
+    #apiCatalogOutputSelector summary {
+      color: color-mix(in srgb, var(--text-color) 92%, var(--accent-cyan) 8%);
+    }
+    #apiCatalogInputSelector label,
+    #apiCatalogOutputSelector label {
+      color: var(--text-color);
+    }
+    #apiCatalogInputSelector input[type='checkbox'],
+    #apiCatalogOutputSelector input[type='checkbox'] {
+      accent-color: var(--accent-cyan);
+    }
+    .mes-console .text-muted {
+      color: color-mix(in srgb, var(--text-color) 78%, var(--accent-grey) 22%) !important;
     }
     .line-shape-pill {
       display: inline-flex;
@@ -518,6 +635,73 @@
     .mes-collapsible-body {
       margin-top: 0.45rem;
     }
+    .assign-shape-preview {
+      border: 1px solid color-mix(in srgb, var(--panel-border) 70%, var(--accent-cyan) 30%);
+      border-radius: 0.55rem;
+      min-height: 46px;
+      padding: 0.35rem 0.45rem;
+      background: color-mix(in srgb, var(--panel-bg) 88%, var(--accent-cyan) 12%);
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      overflow-x: auto;
+    }
+    .assign-shape-board {
+      border: 1px dashed color-mix(in srgb, var(--panel-border) 65%, var(--accent-cyan) 35%);
+      border-radius: 0.55rem;
+      min-height: 180px;
+      max-height: 230px;
+      overflow: auto;
+      padding: 0.4rem;
+      background: color-mix(in srgb, var(--panel-bg) 92%, var(--accent-cyan) 8%);
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .assign-shape-card {
+      border: 1px solid color-mix(in srgb, var(--panel-border) 62%, var(--accent-cyan) 38%);
+      border-radius: 0.5rem;
+      background: color-mix(in srgb, var(--panel-bg) 84%, var(--accent-cyan) 16%);
+      color: var(--accent-cyan);
+      padding: 0.35rem 0.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.45rem;
+      cursor: grab;
+      user-select: none;
+    }
+    .assign-shape-card:active {
+      cursor: grabbing;
+    }
+    .assign-shape-card.drag-over {
+      border-color: var(--accent-cyan);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-cyan) 42%, transparent);
+      transform: translateY(-1px);
+    }
+    .assign-shape-card.selected {
+      background: color-mix(in srgb, var(--panel-bg) 72%, var(--accent-cyan) 28%);
+      border-color: color-mix(in srgb, var(--accent-cyan) 70%, var(--panel-border) 30%);
+    }
+    .assign-shape-card-id {
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      white-space: nowrap;
+    }
+    .assign-shape-card-desc {
+      color: var(--accent-grey);
+      font-size: 0.83rem;
+      text-align: right;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 60%;
+    }
+    .assign-shape-hint {
+      color: var(--accent-grey);
+      font-size: 0.8rem;
+      margin-top: 0.25rem;
+    }
     @media (min-width: 1200px) {
       .mes-workbench {
         grid-template-columns: minmax(0, 0.96fr) minmax(0, 1.04fr);
@@ -536,6 +720,7 @@
     }
     @media (max-width: 600px) {
       .header { flex-direction: column; gap: 0.5rem; height: auto; padding: 1rem 0.5rem; }
+      .header-title { position: static; transform: none; }
       .logo-left, .logo-right { height: 28px; }
       .header-actions { width: 100%; justify-content: center; flex-wrap: wrap; }
       .section { padding: 0.5rem !important; }
@@ -784,9 +969,14 @@
                     <!-- Dynamically filled -->
                   </select>
                   <label class="mb-1">Assigned Stations</label>
-                  <select id="assignedStationsSelect" class="form-select" multiple size="8" style="height:180px;">
+                  <select id="assignedStationsSelect" class="form-select" multiple size="8" style="height:180px; display:none;">
                     <!-- Dynamically filled -->
                   </select>
+                  <label id="assignShapePreviewLabel" class="form-label small mt-2 mb-1">Line Shape</label>
+                  <div id="assignShapePreviewHost" class="assign-shape-preview"></div>
+                  <label id="assignShapeMiniLabel" class="form-label small mt-2 mb-1">Shape Mini App (Drag & Drop)</label>
+                  <div id="assignShapeMiniApp" class="assign-shape-board"></div>
+                  <div id="assignShapeMiniHint" class="assign-shape-hint">Drag stations to reorder the line flow. Click cards to mark and remove with the left-arrow button.</div>
                 </div>
               </div>
             </div>

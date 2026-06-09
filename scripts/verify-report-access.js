@@ -90,6 +90,29 @@ async function checkApiReport(results) {
 async function main() {
   const results = [];
 
+  // Validate SQL login first; a successful SQL-auth connection is authoritative.
+  // Metadata visibility for sys.server_principals can be restricted for integrated users.
+  const reportLoginTest = runSqlcmd([
+    '-S', sqlServer,
+    '-d', sqlDb,
+    '-U', sqlReportUser,
+    '-P', sqlReportPassword,
+    '-Q', 'SET NOCOUNT ON; SELECT 1 AS ok;'
+  ]);
+
+  const reportLoginWorks = reportLoginTest.ok;
+
+  pushResult(
+    results,
+    `SQL login ${sqlReportUser}/*** works`,
+    reportLoginWorks || !requireSqlReportLogin,
+    reportLoginWorks
+      ? 'login ok'
+      : (requireSqlReportLogin
+        ? (reportLoginTest.stderr || reportLoginTest.stdout || 'login failed')
+        : `optional-check-skipped: ${reportLoginTest.stderr || reportLoginTest.stdout || 'login failed'}`)
+  );
+
   const loginExists = runSqlcmd([
     '-S', sqlServer,
     '-d', 'master',
@@ -109,13 +132,17 @@ async function main() {
   } else {
     const count = parseSingleInt(loginExists.stdout);
     const exists = count === 1;
+    const inferredFromLogin = !exists && reportLoginWorks;
+
     pushResult(
       results,
       'SQL check report login exists',
-      exists || !requireSqlReportLogin,
+      exists || inferredFromLogin || !requireSqlReportLogin,
       exists
         ? `count=${count}`
-        : (requireSqlReportLogin ? `count=${count}` : `optional-check-skipped: count=${count}`)
+        : (inferredFromLogin
+          ? `count=${count}; inferred=true (sql login succeeded with ${sqlReportUser})`
+          : (requireSqlReportLogin ? `count=${count}` : `optional-check-skipped: count=${count}`))
     );
   }
 
@@ -132,25 +159,6 @@ async function main() {
     const count = parseSingleInt(roleGrantCheck.stdout);
     pushResult(results, 'SQL role report_view_readers has view grants', count >= 6, `grants=${count}`);
   }
-
-  const reportLoginTest = runSqlcmd([
-    '-S', sqlServer,
-    '-d', sqlDb,
-    '-U', sqlReportUser,
-    '-P', sqlReportPassword,
-    '-Q', 'SET NOCOUNT ON; SELECT 1 AS ok;'
-  ]);
-
-  pushResult(
-    results,
-    `SQL login ${sqlReportUser}/*** works`,
-    reportLoginTest.ok || !requireSqlReportLogin,
-    reportLoginTest.ok
-      ? 'login ok'
-      : (requireSqlReportLogin
-        ? (reportLoginTest.stderr || reportLoginTest.stdout || 'login failed')
-        : `optional-check-skipped: ${reportLoginTest.stderr || reportLoginTest.stdout || 'login failed'}`)
-  );
 
   const integratedViewRead = runSqlcmd([
     '-S', sqlServer,
