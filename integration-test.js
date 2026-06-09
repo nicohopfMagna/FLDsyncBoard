@@ -1,5 +1,12 @@
+require('dotenv').config({ override: true });
+
 const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
 let accessToken = '';
+const ADMIN_USER = process.env.API_ADMIN_USER || 'admin';
+const ADMIN_PASSWORD = process.env.API_ADMIN_PASSWORD || 'admin';
+const REPORT_USER = process.env.API_REPORT_USER || 'report';
+const REPORT_PASSWORD = process.env.API_REPORT_PASSWORD || 'report';
+const REPORT_ALIAS = process.env.API_REPORT_ALIAS || 'report';
 
 async function apiRequest(path, options = {}) {
   const mergedHeaders = {
@@ -70,9 +77,75 @@ async function run() {
   let templateId = null;
 
   try {
+    const unauthUsersRes = await apiRequest('/api/auth/users');
+    record(
+      'GET /api/auth/users (unauthorized)',
+      unauthUsersRes.status === 401,
+      unauthUsersRes.status === 401
+        ? 'unauthorized as expected'
+        : `expected 401, got ${unauthUsersRes.status}`
+    );
+
+    const reportLoginRes = await apiRequest('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ provider: 'local', username: REPORT_USER, password: REPORT_PASSWORD })
+    });
+    const reportLoginOk = reportLoginRes.ok && reportLoginRes.body && reportLoginRes.body.accessToken;
+    record(
+      'POST /api/auth/login (report user)',
+      Boolean(reportLoginOk),
+      reportLoginOk ? 'ok' : formatError(reportLoginRes, 'Report user login failed')
+    );
+
+    if (reportLoginOk) {
+      const reportAccessToken = String(reportLoginRes.body.accessToken || '');
+
+      const reportAliasLoginRes = await apiRequest('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ provider: 'local', username: REPORT_ALIAS, password: REPORT_PASSWORD })
+      });
+      record(
+        'POST /api/auth/login (report alias)',
+        reportAliasLoginRes.ok,
+        reportAliasLoginRes.ok ? 'ok' : formatError(reportAliasLoginRes, 'Report alias login failed')
+      );
+
+      const reportIntegrityRes = await apiRequest('/api/sql-integrity', {
+        headers: { Authorization: `Bearer ${reportAccessToken}` }
+      });
+      record(
+        'GET /api/sql-integrity (report user)',
+        reportIntegrityRes.ok,
+        reportIntegrityRes.ok ? 'read allowed' : formatError(reportIntegrityRes, 'Report user integrity read failed')
+      );
+
+      const reportRepairRes = await apiRequest('/api/sql-integrity-repair', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${reportAccessToken}` }
+      });
+      record(
+        'POST /api/sql-integrity-repair (report user forbidden)',
+        reportRepairRes.status === 403,
+        reportRepairRes.status === 403
+          ? 'forbidden as expected'
+          : `expected 403, got ${reportRepairRes.status}`
+      );
+
+      const reportUsersRes = await apiRequest('/api/auth/users', {
+        headers: { Authorization: `Bearer ${reportAccessToken}` }
+      });
+      record(
+        'GET /api/auth/users (report user forbidden)',
+        reportUsersRes.status === 403,
+        reportUsersRes.status === 403
+          ? 'forbidden as expected'
+          : `expected 403, got ${reportUsersRes.status}`
+      );
+    }
+
     const loginRes = await apiRequest('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ provider: 'local', username: 'admin', password: 'admin' })
+      body: JSON.stringify({ provider: 'local', username: ADMIN_USER, password: ADMIN_PASSWORD })
     });
     const loginOk = loginRes.ok && loginRes.body && loginRes.body.accessToken;
     if (loginOk) {

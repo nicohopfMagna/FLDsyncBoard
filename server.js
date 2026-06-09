@@ -1,4 +1,6 @@
 // Define hashPassword at the top
+require('dotenv').config({ override: true });
+
 function hashPassword(plain) {
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = crypto.pbkdf2Sync(String(plain || ''), salt, 120000, 32, 'sha256').toString('hex');
@@ -47,7 +49,7 @@ const {
   getRelationalIntegrityReport,
   repairRelationalIntegrity
 } = require('./sql-db');
-const { publishMasterdata } = require('./mqtt');
+const { publishMasterdata, publishDataChangeEvent } = require('./mqtt');
 const {
   connectExplorer,
   disconnectExplorer,
@@ -70,6 +72,13 @@ const ADMIN_PASSWORD = process.env.API_ADMIN_PASSWORD || 'admin';
 const REPORT_USER = process.env.API_REPORT_USER || 'report';
 const REPORT_PASSWORD = process.env.API_REPORT_PASSWORD || 'report';
 const API_ENFORCE_REPORT_DEFAULTS = String(process.env.API_ENFORCE_REPORT_DEFAULTS || 'true').toLowerCase() === 'true';
+const API_ENFORCE_DEFAULT_ROLE_PERMISSIONS = String(process.env.API_ENFORCE_DEFAULT_ROLE_PERMISSIONS || 'true').toLowerCase() === 'true';
+const API_ENFORCE_DEFAULT_CREDENTIALS = String(process.env.API_ENFORCE_DEFAULT_CREDENTIALS || 'true').toLowerCase() === 'true';
+const API_REPORT_USER_ALIASES = String(process.env.API_REPORT_USER_ALIASES || 'report')
+  .split(',')
+  .map((x) => x.trim())
+  .filter(Boolean)
+  .filter((x, index, arr) => arr.indexOf(x) === index && x !== REPORT_USER);
 const AUTH_PROVIDER = String(process.env.AUTH_PROVIDER || 'ad-header').toLowerCase();
 const API_AUTH_ALLOW_LEGACY = String(process.env.API_AUTH_ALLOW_LEGACY || 'false').toLowerCase() === 'true';
 const ACCESS_TOKEN_TTL_MS = Number(process.env.ACCESS_TOKEN_TTL_MS || (15 * 60 * 1000));
@@ -304,12 +313,30 @@ async function ensureDefaultLocalUsers() {
   ];
 
   for (const def of defaults) {
-    const shouldUpsert = def.source === 'report-default'
-      ? API_ENFORCE_REPORT_DEFAULTS || !localUsers.has(def.username)
-      : !localUsers.has(def.username);
+    const existing = localUsers.get(def.username);
+    const shouldCreate = !existing;
+    const shouldSyncRoleAndPermissions = Boolean(
+      existing
+      && API_ENFORCE_DEFAULT_ROLE_PERMISSIONS
+      && String(existing.source || '').includes('default')
+    );
+    const shouldSyncReportPassword = Boolean(
+      existing
+      && def.source === 'report-default'
+      && API_ENFORCE_REPORT_DEFAULTS
+    );
+    const shouldSyncDefaultCredentials = Boolean(
+      existing
+      && API_ENFORCE_DEFAULT_CREDENTIALS
+      && String(existing.source || '').includes('default')
+    );
+    const shouldUpsert = shouldCreate || shouldSyncRoleAndPermissions || shouldSyncReportPassword || shouldSyncDefaultCredentials;
 
     if (shouldUpsert) {
-      upsertLocalUser(def);
+      upsertLocalUser({
+        ...def,
+        password: (shouldCreate || shouldSyncReportPassword || shouldSyncDefaultCredentials) ? def.password : undefined
+      });
       await saveUserToDb(localUsers.get(def.username));
     }
   }
@@ -807,10 +834,15 @@ app.post('/api/auth/login', async (req, res) => {
 
     const username = String(req.body?.username || '').trim();
     const password = String(req.body?.password || '').trim();
+    const isReportAlias = username === REPORT_USER || API_REPORT_USER_ALIASES.includes(username);
     let matched = localUsers.get(username);
 
-    // Self-heal report account so report/report stays available as requested.
-    if (username === REPORT_USER && password === REPORT_PASSWORD
+    if (!matched && isReportAlias) {
+      matched = localUsers.get(REPORT_USER);
+    }
+
+    // Self-heal configured report account and allow alias-based migration.
+    if (isReportAlias && password === REPORT_PASSWORD
       && (!matched || !matched.enabled || !verifyPassword(password, matched.passwordHash))) {
       upsertLocalUser({
         username: REPORT_USER,
@@ -1230,6 +1262,8 @@ app.use('/api/fld', async (req, res, next) => {
       const stationId = String(req.query.stationId || '').trim();
       const lineId = String(req.query.lineId || '').trim();
       const timezone = String(req.query.timezone || '-1').trim() || '-1';
+      const fromLocal = String(req.query.fromLocal || '').trim() || '-1';
+      const toLocal = String(req.query.toLocal || '').trim();
 
       if (!stationId && !lineId) {
         return res.status(400).json({ error: 'stationId or lineId required' });
@@ -1245,6 +1279,10 @@ app.use('/api/fld', async (req, res, next) => {
 
       const dt = buildShiftDateTimes(active, now);
       const lengthMinutes = computeDurationMinutes(active.start, active.end);
+      const window = resolveLocalWindow(fromLocal, toLocal);
+      if (!intervalOverlapsLocalWindow(dt.shiftStartDate, dt.shiftEndDate, window)) {
+        return res.status(404).json({ error: 'No shift found for target in selected local range' });
+      }
 
       return res.json({
         Version: FLD_API_VERSION,
@@ -1263,31 +1301,25 @@ app.use('/api/fld', async (req, res, next) => {
       const stationId = String(req.query.stationId || '').trim();
       const lineId = String(req.query.lineId || '').trim();
       const timezone = String(req.query.timezone || '-1').trim() || '-1';
+      const shiftId = String(req.query.shiftId || '').trim();
+      const fromLocal = String(req.query.fromLocal || '').trim() || '-1';
+      const toLocal = String(req.query.toLocal || '').trim();
 
       if (!stationId && !lineId) {
         return res.status(400).json({ error: 'stationId or lineId required' });
       }
 
-      let targetShift = null;
       const now = getNowInTimeZone(timezone);
       const nowMinutes = (now.hour * 60) + now.minute;
+      const window = resolveLocalWindow(fromLocal, toLocal);
+      const targetShiftNames = await resolveBreakShiftNameFilter({ shiftId, stationId, lineId, nowMinutes });
+      const requireShiftMatch = Boolean(shiftId || stationId) || targetShiftNames.size > 0;
+      const targetShiftNameKeys = new Set(Array.from(targetShiftNames).map((name) => normalizeShiftNameKey(name)).filter(Boolean));
 
-      const shifts = await loadShiftsForTarget({ stationId, lineId });
-      targetShift = pickActiveOrFirstShift(shifts, nowMinutes);
-
-      const targetShiftName = String(targetShift?.shiftName || '').trim().toLowerCase();
-
-      const source = await query(
-        `
-          SELECT fields
-          FROM dbo.measurements
-          WHERE measurement IN ('shift_modell', 'shift-modells', 'weekPlans', 'weekPlanSets')
-          ORDER BY id DESC
-        `
-      );
+      const source = await loadShiftModelSourceRows();
 
       const breaks = [];
-      for (const row of source.rows || []) {
+      for (const row of source) {
         let parsed = null;
         try {
           parsed = JSON.parse(row.fields || '{}');
@@ -1296,7 +1328,7 @@ app.use('/api/fld', async (req, res, next) => {
         }
         if (!parsed) continue;
 
-        const models = Array.isArray(parsed) ? parsed : [parsed];
+        const models = extractShiftModelContainers(parsed);
         for (const model of models) {
           const entries = Array.isArray(model?.entries) ? model.entries : [];
           entries.forEach((entry, idx) => {
@@ -1304,8 +1336,10 @@ app.use('/api/fld', async (req, res, next) => {
             if (productive) return;
 
             const entryShiftName = String(entry?.shift || entry?.name || '').trim().toLowerCase();
-            if (targetShiftName && entryShiftName && entryShiftName !== targetShiftName) {
-              return;
+            if (requireShiftMatch) {
+              if (!entryShiftName) return;
+              const entryShiftNameKey = normalizeShiftNameKey(entryShiftName);
+              if (!targetShiftNames.has(entryShiftName) && !targetShiftNameKeys.has(entryShiftNameKey)) return;
             }
 
             const startText = String(entry?.start || entry?.breakStartTime || '').trim();
@@ -1314,6 +1348,7 @@ app.use('/api/fld', async (req, res, next) => {
 
             const breakShift = { start: startText, end: endText };
             const dt = buildShiftDateTimes(breakShift, now);
+            if (!intervalOverlapsLocalWindow(dt.shiftStartDate, dt.shiftEndDate, window)) return;
             const lengthMinutes = computeDurationMinutes(startText, endText);
 
             breaks.push({
@@ -1349,43 +1384,8 @@ app.use('/api/fld', async (req, res, next) => {
       if (!lineId) {
         return res.status(400).json({ error: 'lineId required' });
       }
-
-      let cycleValue = null;
-
-      const result = await query(
-        `
-          SELECT TOP 1 s.cycle_time AS cycleTime
-          FROM (
-            SELECT COALESCE(sa.line_id, sh.line_id) AS lineId, COALESCE(sa.station_id, sh.station_id) AS stationId
-            FROM dbo.shift_assignments sa
-            LEFT JOIN dbo.shifts sh ON sh.id = sa.shift_id
-            WHERE COALESCE(sa.line_id, sh.line_id) = $1
-
-            UNION
-
-            SELECT sh.line_id AS lineId, sh.station_id AS stationId
-            FROM dbo.shifts sh
-            WHERE sh.line_id = $1
-          ) x
-          INNER JOIN dbo.stations s ON s.id = x.stationId
-          WHERE x.lineId = $1
-            AND s.cycle_time IS NOT NULL
-          ORDER BY ISNULL(s.bottleneck, 0) DESC, s.cycle_time ASC, s.id ASC
-        `,
-        [lineId]
-      );
-      if (!result.rows.length) {
-        return res.status(404).json({ error: 'No cycle time found for line' });
-      }
-      cycleValue = result.rows[0]?.cycleTime;
-
-      return res.json({
-        Version: FLD_API_VERSION,
-        Timestamp: formatDateTimeWithOffset(new Date()),
-        CycleTime: {
-          Value: cycleValue != null ? String(Number(cycleValue)) : ''
-        }
-      });
+      const payload = await buildFldCycleTimePayload(lineId);
+      return res.json(payload);
     }
 
     if (fldPath === '/metadata-line-v1') {
@@ -1393,90 +1393,17 @@ app.use('/api/fld', async (req, res, next) => {
       if (!lineId) {
         return res.status(400).json({ error: 'lineId required' });
       }
-
-      const lineResult = await query(
-        `
-          SELECT id AS lineId, description AS lineName
-          FROM dbo.lines
-          WHERE id = $1
-        `,
-        [lineId]
-      );
-      if (!lineResult.rows.length) {
-        return res.status(404).json({ error: 'Line not found' });
-      }
-      const lineName = String(lineResult.rows[0]?.lineName || lineId);
-
-      const stationsResult = await query(
-        `
-          SELECT DISTINCT s.id AS stationId, ISNULL(s.bottleneck, 0) AS bottleneck, ISNULL(s.is_last_station, 0) AS lastStation, s.cycle_time AS cycleTime
-          FROM (
-            SELECT COALESCE(sa.line_id, sh.line_id) AS lineId, COALESCE(sa.station_id, sh.station_id) AS stationId
-            FROM dbo.shift_assignments sa
-            LEFT JOIN dbo.shifts sh ON sh.id = sa.shift_id
-            WHERE COALESCE(sa.line_id, sh.line_id) = $1
-
-            UNION
-
-            SELECT sh.line_id AS lineId, sh.station_id AS stationId
-            FROM dbo.shifts sh
-            WHERE sh.line_id = $1
-          ) x
-          INNER JOIN dbo.stations s ON s.id = x.stationId
-          WHERE x.lineId = $1
-            AND x.stationId IS NOT NULL
-          ORDER BY s.id ASC
-        `,
-        [lineId]
-      );
-
-      const stationIds = (stationsResult.rows || []).map((row) => String(row.stationId || '')).filter(Boolean);
-      const bottleneckStationIds = (stationsResult.rows || [])
-        .filter((row) => Number(row.bottleneck) === 1)
-        .map((row) => String(row.stationId || ''))
-        .filter(Boolean);
-      const bottleneckCycleTimes = (stationsResult.rows || [])
-        .filter((row) => Number(row.bottleneck) === 1 && row.cycleTime != null)
-        .map((row) => ({
-          StationId: String(row.stationId || ''),
-          Value: String(Number(row.cycleTime))
-        }))
-        .filter((entry) => entry.StationId);
-      const lastStationIds = (stationsResult.rows || [])
-        .filter((row) => Number(row.lastStation) === 1)
-        .map((row) => String(row.stationId || ''))
-        .filter(Boolean);
-
-      const bottleneckCycleRow = (stationsResult.rows || []).find((row) => Number(row.bottleneck) === 1 && row.cycleTime != null)
-        || null;
-      const cycleRow = bottleneckCycleRow
-        || (stationsResult.rows || []).find((row) => row.cycleTime != null)
-        || null;
-      const cycleTime = cycleRow?.cycleTime != null
-        ? String(Number(cycleRow.cycleTime))
-        : '';
-
-      return res.json({
-        Version: FLD_API_VERSION,
-        Timestamp: formatDateTimeWithOffset(new Date()),
-        MetadataLine: {
-          LineType: 'Assembly',
-          LineName: lineName,
-          StationIds: stationIds,
-          BottleneckStationIds: bottleneckStationIds,
-          BottleneckCycleTimes: bottleneckCycleTimes,
-          LastStationId: lastStationIds,
-          CycleTime: {
-            Value: cycleTime
-          }
-        }
-      });
+      const payload = await buildFldMetadataLinePayload(lineId);
+      return res.json(payload);
     }
 
     return next();
   } catch (e) {
     if (String(e.message || '').includes('Invalid time zone')) {
       return res.status(400).json({ error: 'Invalid timezone' });
+    }
+    if (Number.isInteger(e?.status) && e.status >= 400) {
+      return res.status(e.status).json({ error: e.message || 'Request failed' });
     }
     return res.status(500).json({ error: e.message });
   }
@@ -1578,6 +1505,43 @@ function buildShiftDateTimes(shift, tzNow) {
   };
 }
 
+function parseLocalDateTimeValue(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw === '-1' || raw === '-1,-1') return null;
+
+  const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T');
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+function resolveLocalWindow(fromLocalRaw, toLocalRaw) {
+  const now = new Date();
+  let from = parseLocalDateTimeValue(fromLocalRaw);
+  const parsedTo = parseLocalDateTimeValue(toLocalRaw);
+  let to = parsedTo || now;
+
+  // Tolerate swapped user input: if from > to, flip both boundaries.
+  if (from instanceof Date && to instanceof Date && from.getTime() > to.getTime()) {
+    const tmp = from;
+    from = to;
+    to = tmp;
+  }
+
+  return { from, to };
+}
+
+function intervalOverlapsLocalWindow(startDateTimeText, endDateTimeText, window) {
+  if (!window) return true;
+  const start = new Date(startDateTimeText);
+  const end = new Date(endDateTimeText);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+
+  const windowFrom = window.from instanceof Date ? window.from.getTime() : Number.NEGATIVE_INFINITY;
+  const windowTo = window.to instanceof Date ? window.to.getTime() : Number.POSITIVE_INFINITY;
+  return start.getTime() <= windowTo && end.getTime() >= windowFrom;
+}
+
 function normalizeLineShapeType(input) {
   const raw = String(input || '').trim().toLowerCase();
   if (!raw) return 'I-shape';
@@ -1597,6 +1561,12 @@ function normalizeLineShapeType(input) {
     't-shape': 'T-shape',
     cell: 'Cell-shape',
     'cell-shape': 'Cell-shape',
+    mz: 'Modular-zones-shape',
+    modular: 'Modular-zones-shape',
+    'modular-zones': 'Modular-zones-shape',
+    'modular-zones-shape': 'Modular-zones-shape',
+    'modular zones': 'Modular-zones-shape',
+    modularzones: 'Modular-zones-shape',
     // Legacy aliases mapped to the fixed shape catalog.
     ring: 'O-shape',
     'ring-shape': 'O-shape',
@@ -1648,11 +1618,285 @@ function toIsoUtc(localDateTime) {
   return formatDateTimeWithOffset(parsed);
 }
 
+function createHttpError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+async function buildFldCycleTimePayload(lineId) {
+  const normalizedLineId = String(lineId || '').trim();
+  if (!normalizedLineId) {
+    throw createHttpError(400, 'lineId required');
+  }
+
+  const result = await query(
+    `
+      SELECT TOP 1 s.cycle_time AS cycleTime
+      FROM (
+        SELECT sa.line_id AS [lineId], sa.station_id AS [stationId]
+        FROM dbo.shift_assignments sa
+        WHERE sa.line_id = $1
+          AND sa.station_id IS NOT NULL
+
+        UNION
+
+        SELECT sh.line_id AS [lineId], sh.station_id AS [stationId]
+        FROM dbo.shifts sh
+        WHERE sh.line_id = $1
+          AND sh.station_id IS NOT NULL
+
+        UNION
+
+        SELECT sh.line_id AS [lineId], COALESCE(sa.station_id, sh.station_id) AS [stationId]
+        FROM dbo.shift_assignments sa
+        INNER JOIN dbo.shifts sh ON sh.id = sa.shift_id
+        WHERE sa.line_id IS NULL
+          AND sh.line_id = $1
+          AND COALESCE(sa.station_id, sh.station_id) IS NOT NULL
+      ) x
+      INNER JOIN dbo.stations s ON s.id = x.[stationId]
+      WHERE x.[lineId] = $1
+        AND s.cycle_time IS NOT NULL
+      ORDER BY ISNULL(s.bottleneck, 0) DESC, s.cycle_time ASC, s.id ASC
+    `,
+    [normalizedLineId]
+  );
+  if (!result.rows.length) {
+    throw createHttpError(404, 'No cycle time found for line');
+  }
+
+  const cycleValue = result.rows[0]?.cycleTime;
+  return {
+    Version: FLD_API_VERSION,
+    Timestamp: formatDateTimeWithOffset(new Date()),
+    CycleTime: {
+      Value: cycleValue != null ? String(Number(cycleValue)) : ''
+    }
+  };
+}
+
+async function buildFldMetadataLinePayload(lineId) {
+  const normalizedLineId = String(lineId || '').trim();
+  if (!normalizedLineId) {
+    throw createHttpError(400, 'lineId required');
+  }
+
+  const lineResult = await query(
+    `
+      SELECT id AS lineId, description AS lineName
+      FROM dbo.lines
+      WHERE id = $1
+    `,
+    [normalizedLineId]
+  );
+  if (!lineResult.rows.length) {
+    throw createHttpError(404, 'Line not found');
+  }
+  const lineName = String(lineResult.rows[0]?.lineName || normalizedLineId);
+
+  const stationsResult = await query(
+    `
+      SELECT DISTINCT s.id AS [stationId], ISNULL(s.bottleneck, 0) AS bottleneck, ISNULL(s.is_last_station, 0) AS [lastStation], s.cycle_time AS [cycleTime]
+      FROM (
+        SELECT sa.line_id AS [lineId], sa.station_id AS [stationId]
+        FROM dbo.shift_assignments sa
+        WHERE sa.line_id = $1
+          AND sa.station_id IS NOT NULL
+
+        UNION
+
+        SELECT sh.line_id AS [lineId], sh.station_id AS [stationId]
+        FROM dbo.shifts sh
+        WHERE sh.line_id = $1
+          AND sh.station_id IS NOT NULL
+
+        UNION
+
+        SELECT sh.line_id AS [lineId], COALESCE(sa.station_id, sh.station_id) AS [stationId]
+        FROM dbo.shift_assignments sa
+        INNER JOIN dbo.shifts sh ON sh.id = sa.shift_id
+        WHERE sa.line_id IS NULL
+          AND sh.line_id = $1
+          AND COALESCE(sa.station_id, sh.station_id) IS NOT NULL
+      ) x
+      INNER JOIN dbo.stations s ON s.id = x.[stationId]
+      WHERE x.[lineId] = $1
+        AND x.[stationId] IS NOT NULL
+      ORDER BY s.id ASC
+    `,
+    [normalizedLineId]
+  );
+
+  const stationIds = (stationsResult.rows || []).map((row) => String(row.stationId || '')).filter(Boolean);
+  const bottleneckStationIds = (stationsResult.rows || [])
+    .filter((row) => Number(row.bottleneck) === 1)
+    .map((row) => String(row.stationId || ''))
+    .filter(Boolean);
+  const bottleneckCycleTimes = (stationsResult.rows || [])
+    .filter((row) => Number(row.bottleneck) === 1 && row.cycleTime != null)
+    .map((row) => ({
+      StationId: String(row.stationId || ''),
+      Value: String(Number(row.cycleTime))
+    }))
+    .filter((entry) => entry.StationId);
+  const lastStationIds = (stationsResult.rows || [])
+    .filter((row) => Number(row.lastStation) === 1)
+    .map((row) => String(row.stationId || ''))
+    .filter(Boolean);
+
+  const bottleneckCycleRow = (stationsResult.rows || []).find((row) => Number(row.bottleneck) === 1 && row.cycleTime != null)
+    || null;
+  const cycleRow = bottleneckCycleRow
+    || (stationsResult.rows || []).find((row) => row.cycleTime != null)
+    || null;
+  const cycleTime = cycleRow?.cycleTime != null
+    ? String(Number(cycleRow.cycleTime))
+    : '';
+
+  return {
+    Version: FLD_API_VERSION,
+    Timestamp: formatDateTimeWithOffset(new Date()),
+    MetadataLine: {
+      LineType: 'Assembly',
+      LineName: lineName,
+      StationIds: stationIds,
+      BottleneckStationIds: bottleneckStationIds,
+      BottleneckCycleTimes: bottleneckCycleTimes,
+      LastStationId: lastStationIds,
+      CycleTime: {
+        Value: cycleTime
+      }
+    }
+  };
+}
+
+async function loadAllLineIdsForMetadataPublish() {
+  const result = await query(`SELECT id FROM dbo.lines ORDER BY id ASC`);
+  return (result.rows || []).map((row) => String(row.id || '')).filter(Boolean);
+}
+
+async function publishFldMetadataDataChangeEvents(lineIds, context = {}) {
+  const normalizedLineIds = [...new Set((Array.isArray(lineIds) ? lineIds : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))];
+
+  const effectiveLineIds = normalizedLineIds.length
+    ? normalizedLineIds
+    : await loadAllLineIdsForMetadataPublish();
+
+  for (const lineId of effectiveLineIds) {
+    try {
+      const metadataLinePayload = await buildFldMetadataLinePayload(lineId);
+      const stationIds = Array.isArray(metadataLinePayload?.MetadataLine?.StationIds)
+        ? metadataLinePayload.MetadataLine.StationIds
+        : [];
+      const targetStationIds = stationIds.length ? stationIds : ['unknown'];
+
+      for (const stationId of targetStationIds) {
+        publishDataChangeEvent({
+          stationId,
+          endpoint: `/api/fld/metadata-line-v1?lineId=${encodeURIComponent(lineId)}`,
+          payload: metadataLinePayload,
+          context: { ...context, lineId }
+        });
+      }
+
+      try {
+        const cycleTimePayload = await buildFldCycleTimePayload(lineId);
+        for (const stationId of targetStationIds) {
+          publishDataChangeEvent({
+            stationId,
+            endpoint: `/api/fld/cycle-time-v1?lineId=${encodeURIComponent(lineId)}`,
+            payload: cycleTimePayload,
+            context: { ...context, lineId }
+          });
+        }
+      } catch (cycleError) {
+        if (Number(cycleError?.status) !== 404) {
+          throw cycleError;
+        }
+      }
+    } catch (error) {
+      if (Number(error?.status) === 404) {
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+function triggerFldMetadataDataChange(options = {}) {
+  const lineIds = Array.isArray(options.lineIds) ? options.lineIds : [];
+  const context = {
+    reason: String(options.reason || '').trim(),
+    action: String(options.action || '').trim()
+  };
+
+  publishFldMetadataDataChangeEvents(lineIds, context).catch((error) => {
+    appLogger.warn('mqtt.datachange.publish.failed', {
+      reason: context.reason,
+      action: context.action,
+      lineIds,
+      error
+    });
+  });
+}
+
 function parseFlexibleBoolean(value) {
   return value === true
     || value === 1
     || String(value || '').toLowerCase() === 'true'
     || String(value || '') === '1';
+}
+
+function normalizeShiftNameKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function extractShiftModelContainers(parsed) {
+  if (!parsed) return [];
+  if (Array.isArray(parsed)) return parsed;
+  if (typeof parsed !== 'object') return [];
+
+  const models = [];
+  if (parsed.name && Array.isArray(parsed.entries)) {
+    models.push(parsed);
+  }
+  if (Array.isArray(parsed.weekPlanSets)) {
+    models.push(...parsed.weekPlanSets);
+  }
+  if (Array.isArray(parsed.payload?.weekPlanSets)) {
+    models.push(...parsed.payload.weekPlanSets);
+  }
+  return models;
+}
+
+async function loadShiftModelSourceRows() {
+  const fromMeasurements = await query(
+    `
+      SELECT fields
+      FROM dbo.measurements
+      WHERE measurement IN ('shift_modell', 'shift-modells', 'weekPlans', 'weekPlanSets')
+      ORDER BY id DESC
+    `
+  );
+
+  const fromTemplates = await query(
+    `
+      SELECT payload AS fields
+      FROM dbo.masterdata_templates
+      WHERE payload IS NOT NULL
+      ORDER BY updated_at DESC, id DESC
+    `
+  );
+
+  return [
+    ...(fromMeasurements.rows || []),
+    ...(fromTemplates.rows || [])
+  ];
 }
 
 async function loadShiftsForTarget({ stationId, lineId }) {
@@ -1666,7 +1910,6 @@ async function loadShiftsForTarget({ stationId, lineId }) {
         sh.line_id AS lineId,
         sh.station_id AS stationId
       FROM dbo.shifts sh
-      LEFT JOIN dbo.shift_assignments sa ON sa.shift_id = sh.id
       WHERE 1 = 1
     `;
     const params = [];
@@ -1677,8 +1920,15 @@ async function loadShiftsForTarget({ stationId, lineId }) {
       sqlText += `
         AND (
           sh.station_id = ${placeholder}
-          OR sa.station_id = ${placeholder}
-          OR (sa.target_type = 'station' AND sa.target_id = ${placeholder})
+          OR EXISTS (
+            SELECT 1
+            FROM dbo.shift_assignments sa
+            WHERE sa.shift_id = sh.id
+              AND (
+                sa.station_id = ${placeholder}
+                OR (sa.target_type = 'station' AND sa.target_id = ${placeholder})
+              )
+          )
         )
       `;
     }
@@ -1688,8 +1938,15 @@ async function loadShiftsForTarget({ stationId, lineId }) {
       sqlText += `
         AND (
           sh.line_id = ${placeholder}
-          OR sa.line_id = ${placeholder}
-          OR (sa.target_type = 'line' AND sa.target_id = ${placeholder})
+          OR EXISTS (
+            SELECT 1
+            FROM dbo.shift_assignments sa
+            WHERE sa.shift_id = sh.id
+              AND (
+                sa.line_id = ${placeholder}
+                OR (sa.target_type = 'line' AND sa.target_id = ${placeholder})
+              )
+          )
         )
       `;
     }
@@ -1716,17 +1973,10 @@ async function loadShiftsForTarget({ stationId, lineId }) {
 }
 
 async function loadShiftsFromMeasurementsFallback() {
-  const source = await query(
-    `
-      SELECT fields
-      FROM dbo.measurements
-      WHERE measurement IN ('shift_modell', 'shift-modells', 'weekPlans', 'weekPlanSets')
-      ORDER BY id DESC
-    `
-  );
+  const source = await loadShiftModelSourceRows();
 
   const shifts = [];
-  for (const row of source.rows || []) {
+  for (const row of source) {
     let parsed = null;
     try {
       parsed = JSON.parse(row.fields || '{}');
@@ -1735,7 +1985,7 @@ async function loadShiftsFromMeasurementsFallback() {
     }
     if (!parsed) continue;
 
-    const models = Array.isArray(parsed) ? parsed : [parsed];
+    const models = extractShiftModelContainers(parsed);
     for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
       const model = models[modelIndex];
       const entries = Array.isArray(model?.entries) ? model.entries : [];
@@ -1780,6 +2030,44 @@ function pickActiveOrFirstShift(shifts, nowMinutes) {
   return shifts.find((row) => shiftMatchesMinutes(row.start, row.end, nowMinutes)) || shifts[0];
 }
 
+async function resolveBreakShiftNameFilter({ shiftId, stationId, lineId, nowMinutes }) {
+  const names = new Set();
+  const addName = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized) names.add(normalized);
+  };
+
+  if (shiftId) {
+    const result = await query(
+      `
+        SELECT id AS shiftId, name AS shiftName
+        FROM dbo.shifts
+        WHERE id = $1
+      `,
+      [shiftId]
+    );
+    addName(result.rows?.[0]?.shiftName);
+    return names;
+  }
+
+  // For a pure line query, include all shifts of that line instead of only the active one.
+  if (lineId && !stationId) {
+    const lineShifts = await loadShiftsForTarget({ stationId: '', lineId });
+    for (const shift of lineShifts || []) {
+      addName(shift?.shiftName);
+    }
+    if (names.size) return names;
+  }
+
+  if (stationId || lineId) {
+    const shifts = await loadShiftsForTarget({ stationId, lineId });
+    const targetShift = pickActiveOrFirstShift(shifts, nowMinutes);
+    addName(targetShift?.shiftName);
+  }
+
+  return names;
+}
+
 function toShiftIdValue(rawId, shiftName) {
   const normalizedName = String(shiftName || '').trim();
   if (normalizedName) return normalizedName;
@@ -1818,6 +2106,7 @@ app.post('/api/assign-shift', async (req, res) => {
     }
     await writePoint('shift_assignment', { shiftId, targetType, targetId });
     publishMasterdata('shift_assignment', { shiftId, targetType, targetId });
+    triggerFldMetadataDataChange({ reason: 'shift_assignment.create', action: 'create' });
     res.json({ status: 'ok' });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1885,6 +2174,7 @@ app.patch('/api/assign-shift/:id', async (req, res) => {
       `SELECT id, shift_id AS shiftId, target_type AS targetType, target_id AS targetId, line_id AS lineId, station_id AS stationId FROM dbo.shift_assignments WHERE id = $1`,
       [id]
     );
+    triggerFldMetadataDataChange({ reason: 'shift_assignment.update', action: 'update' });
     res.json({ status: 'ok', assignment: updated.rows?.[0] || null });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1905,6 +2195,7 @@ app.delete('/api/assign-shift/:id', async (req, res) => {
     }
 
     await query(`DELETE FROM dbo.shift_assignments WHERE id = $1`, [id]);
+    triggerFldMetadataDataChange({ reason: 'shift_assignment.delete', action: 'delete' });
     res.json({ status: 'ok', deletedId: id });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1938,6 +2229,7 @@ app.post('/api/station', async (req, res) => {
 
     await writePoint('station', stationPayload);
     publishMasterdata('station', stationPayload);
+    triggerFldMetadataDataChange({ reason: 'station.create', action: 'create' });
     res.json({ status: 'ok' });
   } catch (e) {
     appLogger.error('station.create.failed', { requestId: req.requestId, error: e, route: '/api/station' });
@@ -1987,6 +2279,7 @@ app.patch('/api/station/:id', async (req, res) => {
     );
 
     const updated = await query(`SELECT id, description, ISNULL(bottleneck, 0) AS bottleneck, ISNULL(is_last_station, 0) AS lastStation, cycle_time AS cycleTime FROM dbo.stations WHERE id = $1`, [id]);
+    triggerFldMetadataDataChange({ reason: 'station.update', action: 'update' });
     res.json({ status: 'ok', station: updated.rows?.[0] || null });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2006,6 +2299,7 @@ app.delete('/api/station/:id', async (req, res) => {
     await query(`UPDATE dbo.shifts SET station_id = NULL, updated_at = SYSUTCDATETIME() WHERE station_id = $1`, [id]);
     await query(`DELETE FROM dbo.shift_assignments WHERE station_id = $1 OR (target_type = 'station' AND target_id = $1)`, [id]);
     await query(`DELETE FROM dbo.stations WHERE id = $1`, [id]);
+    triggerFldMetadataDataChange({ reason: 'station.delete', action: 'delete' });
     res.json({ status: 'ok', deletedId: id });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2020,6 +2314,7 @@ app.post('/api/line', async (req, res) => {
     const normalizedShapeType = normalizeLineShapeType(shapeType);
     await writePoint('line', { id, description, shapeType: normalizedShapeType });
     publishMasterdata('line', { id, description, shapeType: normalizedShapeType });
+    triggerFldMetadataDataChange({ reason: 'line.create', action: 'create', lineIds: [id] });
     res.json({ status: 'ok' });
   } catch (e) {
     appLogger.error('line.create.failed', { requestId: req.requestId, error: e, route: '/api/line' });
@@ -2042,6 +2337,7 @@ app.patch('/api/line/:id', async (req, res) => {
 
     await query(`UPDATE dbo.lines SET description = $1, shape_type = $2, updated_at = SYSUTCDATETIME() WHERE id = $3`, [description, shapeType, id]);
     const updated = await query(`SELECT id, description, shape_type AS shapeType FROM dbo.lines WHERE id = $1`, [id]);
+    triggerFldMetadataDataChange({ reason: 'line.update', action: 'update', lineIds: [id] });
     res.json({ status: 'ok', line: updated.rows?.[0] || null });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2061,6 +2357,7 @@ app.delete('/api/line/:id', async (req, res) => {
     await query(`UPDATE dbo.shifts SET line_id = NULL, updated_at = SYSUTCDATETIME() WHERE line_id = $1`, [id]);
     await query(`DELETE FROM dbo.shift_assignments WHERE line_id = $1 OR (target_type = 'line' AND target_id = $1)`, [id]);
     await query(`DELETE FROM dbo.lines WHERE id = $1`, [id]);
+    triggerFldMetadataDataChange({ reason: 'line.delete', action: 'delete', lineIds: [id] });
     res.json({ status: 'ok', deletedId: id });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2074,6 +2371,7 @@ app.post('/api/shift', async (req, res) => {
     if (!id || !name || !start || !end) return res.status(400).json({ error: 'id, name, start, end required' });
     await writePoint('shift', { id, name, start, end, lineId, stationId });
     publishMasterdata('shift', { id, name, start, end, lineId, stationId });
+    triggerFldMetadataDataChange({ reason: 'shift.create', action: 'create', lineIds: lineId ? [lineId] : [] });
     res.json({ status: 'ok' });
   } catch (e) {
     appLogger.error('shift.create.failed', { requestId: req.requestId, error: e, route: '/api/shift' });
@@ -2112,6 +2410,11 @@ app.patch('/api/shift/:id', async (req, res) => {
       `SELECT id, name, start_time AS start, end_time AS [end], line_id AS lineId, station_id AS stationId FROM dbo.shifts WHERE id = $1`,
       [id]
     );
+    triggerFldMetadataDataChange({
+      reason: 'shift.update',
+      action: 'update',
+      lineIds: [current.lineId, lineId].filter(Boolean)
+    });
     res.json({ status: 'ok', shift: updated.rows?.[0] || null });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2130,6 +2433,7 @@ app.delete('/api/shift/:id', async (req, res) => {
 
     await query(`DELETE FROM dbo.shift_assignments WHERE shift_id = $1`, [id]);
     await query(`DELETE FROM dbo.shifts WHERE id = $1`, [id]);
+    triggerFldMetadataDataChange({ reason: 'shift.delete', action: 'delete' });
     res.json({ status: 'ok', deletedId: id });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2297,17 +2601,10 @@ app.get('/api/time-events', async (req, res) => {
 // Contract API: all shift modells from measurements storage (if available)
 app.get('/api/shift-modells', async (req, res) => {
   try {
-    const result = await query(
-      `
-        SELECT measurement, fields
-        FROM dbo.measurements
-        WHERE measurement IN ('shift_modell', 'shift-modells', 'weekPlans', 'weekPlanSets')
-        ORDER BY id DESC
-      `
-    );
+    const resultRows = await loadShiftModelSourceRows();
 
     const modells = [];
-    for (const row of result.rows) {
+    for (const row of resultRows) {
       let parsed = null;
       try {
         parsed = JSON.parse(row.fields || '{}');
@@ -2316,14 +2613,11 @@ app.get('/api/shift-modells', async (req, res) => {
       }
       if (!parsed) continue;
 
-      if (Array.isArray(parsed)) {
-        for (const item of parsed) {
-          if (item && item.name && Array.isArray(item.entries)) {
-            modells.push({ name: String(item.name), entries: item.entries });
-          }
+      const models = extractShiftModelContainers(parsed);
+      for (const item of models) {
+        if (item && item.name && Array.isArray(item.entries)) {
+          modells.push({ name: String(item.name), entries: item.entries });
         }
-      } else if (parsed.name && Array.isArray(parsed.entries)) {
-        modells.push({ name: String(parsed.name), entries: parsed.entries });
       }
     }
 
@@ -2595,6 +2889,8 @@ app.get('/api/uns/shift-schedule', async (req, res) => {
     const stationId = String(req.query.stationId || '').trim();
     const lineId = String(req.query.lineId || '').trim();
     const timezone = String(req.query.timezone || '-1').trim() || '-1';
+    const fromLocal = String(req.query.fromLocal || '').trim() || '-1';
+    const toLocal = String(req.query.toLocal || '').trim();
 
     if (!stationId && !lineId) {
       return res.status(400).json({ error: 'stationId or lineId required' });
@@ -2610,6 +2906,10 @@ app.get('/api/uns/shift-schedule', async (req, res) => {
 
     const dt = buildShiftDateTimes(active, now);
     const lengthMinutes = computeDurationMinutes(active.start, active.end);
+    const window = resolveLocalWindow(fromLocal, toLocal);
+    if (!intervalOverlapsLocalWindow(dt.shiftStartDate, dt.shiftEndDate, window)) {
+      return res.status(404).json({ error: 'No shift found for target in selected local range' });
+    }
 
     return res.json({
       Version: UNS_API_VERSION,
@@ -2637,39 +2937,20 @@ app.get('/api/uns/break-schedule', async (req, res) => {
     const stationId = String(req.query.stationId || '').trim();
     const lineId = String(req.query.lineId || '').trim();
     const timezone = String(req.query.timezone || '-1').trim() || '-1';
+    const fromLocal = String(req.query.fromLocal || '').trim() || '-1';
+    const toLocal = String(req.query.toLocal || '').trim();
 
-    let targetShift = null;
     const now = getNowInTimeZone(timezone);
     const nowMinutes = (now.hour * 60) + now.minute;
+    const window = resolveLocalWindow(fromLocal, toLocal);
+    const targetShiftNames = await resolveBreakShiftNameFilter({ shiftId, stationId, lineId, nowMinutes });
+    const requireShiftMatch = Boolean(shiftId || stationId) || targetShiftNames.size > 0;
+    const targetShiftNameKeys = new Set(Array.from(targetShiftNames).map((name) => normalizeShiftNameKey(name)).filter(Boolean));
 
-    if (shiftId) {
-      const result = await query(
-        `
-          SELECT id AS shiftId, name AS shiftName, start_time AS start, end_time AS [end], line_id AS lineId, station_id AS stationId
-          FROM dbo.shifts
-          WHERE id = $1
-        `,
-        [shiftId]
-      );
-      targetShift = result.rows?.[0] || null;
-    } else if (stationId || lineId) {
-      const shifts = await loadShiftsForTarget({ stationId, lineId });
-      targetShift = pickActiveOrFirstShift(shifts, nowMinutes);
-    }
-
-    const targetShiftName = String(targetShift?.shiftName || '').trim().toLowerCase();
-
-    const source = await query(
-      `
-        SELECT fields
-        FROM dbo.measurements
-        WHERE measurement IN ('shift_modell', 'shift-modells', 'weekPlans', 'weekPlanSets')
-        ORDER BY id DESC
-      `
-    );
+    const source = await loadShiftModelSourceRows();
 
     const breaks = [];
-    for (const row of source.rows || []) {
+    for (const row of source) {
       let parsed = null;
       try {
         parsed = JSON.parse(row.fields || '{}');
@@ -2678,7 +2959,7 @@ app.get('/api/uns/break-schedule', async (req, res) => {
       }
       if (!parsed) continue;
 
-      const models = Array.isArray(parsed) ? parsed : [parsed];
+      const models = extractShiftModelContainers(parsed);
       for (const model of models) {
         const entries = Array.isArray(model?.entries) ? model.entries : [];
         entries.forEach((entry, idx) => {
@@ -2686,8 +2967,10 @@ app.get('/api/uns/break-schedule', async (req, res) => {
           if (productive) return;
 
           const entryShiftName = String(entry?.shift || entry?.name || '').trim().toLowerCase();
-          if (targetShiftName && entryShiftName && entryShiftName !== targetShiftName) {
-            return;
+          if (requireShiftMatch) {
+            if (!entryShiftName) return;
+            const entryShiftNameKey = normalizeShiftNameKey(entryShiftName);
+            if (!targetShiftNames.has(entryShiftName) && !targetShiftNameKeys.has(entryShiftNameKey)) return;
           }
 
           const startText = String(entry?.start || entry?.breakStartTime || '').trim();
@@ -2696,6 +2979,7 @@ app.get('/api/uns/break-schedule', async (req, res) => {
 
           const breakShift = { start: startText, end: endText };
           const dt = buildShiftDateTimes(breakShift, now);
+          if (!intervalOverlapsLocalWindow(dt.shiftStartDate, dt.shiftEndDate, window)) return;
           const lengthMinutes = computeDurationMinutes(startText, endText);
 
           breaks.push({
@@ -2761,19 +3045,29 @@ app.get('/api/uns/cycle-time', async (req, res) => {
         `
           SELECT TOP 1 s.cycle_time AS cycleTime
           FROM (
-            SELECT COALESCE(sa.line_id, sh.line_id) AS lineId, COALESCE(sa.station_id, sh.station_id) AS stationId
+            SELECT sa.line_id AS [lineId], sa.station_id AS [stationId]
             FROM dbo.shift_assignments sa
-            LEFT JOIN dbo.shifts sh ON sh.id = sa.shift_id
-            WHERE COALESCE(sa.line_id, sh.line_id) = $1
+            WHERE sa.line_id = $1
+              AND sa.station_id IS NOT NULL
 
             UNION
 
-            SELECT sh.line_id AS lineId, sh.station_id AS stationId
+            SELECT sh.line_id AS [lineId], sh.station_id AS [stationId]
             FROM dbo.shifts sh
             WHERE sh.line_id = $1
+              AND sh.station_id IS NOT NULL
+
+            UNION
+
+            SELECT sh.line_id AS [lineId], COALESCE(sa.station_id, sh.station_id) AS [stationId]
+            FROM dbo.shift_assignments sa
+            INNER JOIN dbo.shifts sh ON sh.id = sa.shift_id
+            WHERE sa.line_id IS NULL
+              AND sh.line_id = $1
+              AND COALESCE(sa.station_id, sh.station_id) IS NOT NULL
           ) x
-          INNER JOIN dbo.stations s ON s.id = x.stationId
-          WHERE x.lineId = $1
+          INNER JOIN dbo.stations s ON s.id = x.[stationId]
+          WHERE x.[lineId] = $1
             AND s.cycle_time IS NOT NULL
           ORDER BY ISNULL(s.bottleneck, 0) DESC, s.cycle_time ASC, s.id ASC
         `,
@@ -3100,6 +3394,7 @@ app.post('/api/masterdata-template', async (req, res) => {
 
     if (syncLiveAssignments) {
       liveAssignmentSync = await syncTemplateAssignmentsToLive(payload?.assignments);
+      triggerFldMetadataDataChange({ reason: 'masterdata_template.sync_assignments', action: 'sync' });
     }
 
     res.json({
@@ -3294,6 +3589,8 @@ app.use('/api/contract', async (req, res, next) => {
       const stationId = String(req.query.stationId || '').trim();
       const lineId = String(req.query.lineId || '').trim();
       const timezone = String(req.query.timezone || '-1').trim() || '-1';
+      const fromLocal = String(req.query.fromLocal || '').trim() || '-1';
+      const toLocal = String(req.query.toLocal || '').trim();
 
       if (!stationId && !lineId) {
         return res.status(400).json({ error: 'stationId or lineId required' });
@@ -3309,6 +3606,10 @@ app.use('/api/contract', async (req, res, next) => {
 
       const dt = buildShiftDateTimes(active, now);
       const lengthMinutes = computeDurationMinutes(active.start, active.end);
+      const window = resolveLocalWindow(fromLocal, toLocal);
+      if (!intervalOverlapsLocalWindow(dt.shiftStartDate, dt.shiftEndDate, window)) {
+        return res.status(404).json({ error: 'No shift found for target in selected local range' });
+      }
 
       return res.json({
         Version: UNS_API_VERSION,
@@ -3335,39 +3636,20 @@ app.use('/api/contract', async (req, res, next) => {
       const stationId = String(req.query.stationId || '').trim();
       const lineId = String(req.query.lineId || '').trim();
       const timezone = String(req.query.timezone || '-1').trim() || '-1';
+      const fromLocal = String(req.query.fromLocal || '').trim() || '-1';
+      const toLocal = String(req.query.toLocal || '').trim();
 
-      let targetShift = null;
       const now = getNowInTimeZone(timezone);
       const nowMinutes = (now.hour * 60) + now.minute;
+      const window = resolveLocalWindow(fromLocal, toLocal);
+      const targetShiftNames = await resolveBreakShiftNameFilter({ shiftId, stationId, lineId, nowMinutes });
+      const requireShiftMatch = Boolean(shiftId || stationId) || targetShiftNames.size > 0;
+      const targetShiftNameKeys = new Set(Array.from(targetShiftNames).map((name) => normalizeShiftNameKey(name)).filter(Boolean));
 
-      if (shiftId) {
-        const result = await query(
-          `
-            SELECT id AS shiftId, name AS shiftName, start_time AS start, end_time AS [end], line_id AS lineId, station_id AS stationId
-            FROM dbo.shifts
-            WHERE id = $1
-          `,
-          [shiftId]
-        );
-        targetShift = result.rows?.[0] || null;
-      } else if (stationId || lineId) {
-        const shifts = await loadShiftsForTarget({ stationId, lineId });
-        targetShift = pickActiveOrFirstShift(shifts, nowMinutes);
-      }
-
-      const targetShiftName = String(targetShift?.shiftName || '').trim().toLowerCase();
-
-      const source = await query(
-        `
-          SELECT fields
-          FROM dbo.measurements
-          WHERE measurement IN ('shift_modell', 'shift-modells', 'weekPlans', 'weekPlanSets')
-          ORDER BY id DESC
-        `
-      );
+      const source = await loadShiftModelSourceRows();
 
       const breaks = [];
-      for (const row of source.rows || []) {
+      for (const row of source) {
         let parsed = null;
         try {
           parsed = JSON.parse(row.fields || '{}');
@@ -3376,7 +3658,7 @@ app.use('/api/contract', async (req, res, next) => {
         }
         if (!parsed) continue;
 
-        const models = Array.isArray(parsed) ? parsed : [parsed];
+        const models = extractShiftModelContainers(parsed);
         for (const model of models) {
           const entries = Array.isArray(model?.entries) ? model.entries : [];
           entries.forEach((entry, idx) => {
@@ -3384,8 +3666,10 @@ app.use('/api/contract', async (req, res, next) => {
             if (productive) return;
 
             const entryShiftName = String(entry?.shift || entry?.name || '').trim().toLowerCase();
-            if (targetShiftName && entryShiftName && entryShiftName !== targetShiftName) {
-              return;
+            if (requireShiftMatch) {
+              if (!entryShiftName) return;
+              const entryShiftNameKey = normalizeShiftNameKey(entryShiftName);
+              if (!targetShiftNames.has(entryShiftName) && !targetShiftNameKeys.has(entryShiftNameKey)) return;
             }
 
             const startText = String(entry?.start || entry?.breakStartTime || '').trim();
@@ -3394,6 +3678,7 @@ app.use('/api/contract', async (req, res, next) => {
 
             const breakShift = { start: startText, end: endText };
             const dt = buildShiftDateTimes(breakShift, now);
+            if (!intervalOverlapsLocalWindow(dt.shiftStartDate, dt.shiftEndDate, window)) return;
             const lengthMinutes = computeDurationMinutes(startText, endText);
 
             breaks.push({
@@ -3458,19 +3743,29 @@ app.use('/api/contract', async (req, res, next) => {
           `
             SELECT TOP 1 s.cycle_time AS cycleTime
             FROM (
-              SELECT COALESCE(sa.line_id, sh.line_id) AS lineId, COALESCE(sa.station_id, sh.station_id) AS stationId
+              SELECT sa.line_id AS [lineId], sa.station_id AS [stationId]
               FROM dbo.shift_assignments sa
-              LEFT JOIN dbo.shifts sh ON sh.id = sa.shift_id
-              WHERE COALESCE(sa.line_id, sh.line_id) = $1
+              WHERE sa.line_id = $1
+                AND sa.station_id IS NOT NULL
 
               UNION
 
-              SELECT sh.line_id AS lineId, sh.station_id AS stationId
+              SELECT sh.line_id AS [lineId], sh.station_id AS [stationId]
               FROM dbo.shifts sh
               WHERE sh.line_id = $1
+                AND sh.station_id IS NOT NULL
+
+              UNION
+
+              SELECT sh.line_id AS [lineId], COALESCE(sa.station_id, sh.station_id) AS [stationId]
+              FROM dbo.shift_assignments sa
+              INNER JOIN dbo.shifts sh ON sh.id = sa.shift_id
+              WHERE sa.line_id IS NULL
+                AND sh.line_id = $1
+                AND COALESCE(sa.station_id, sh.station_id) IS NOT NULL
             ) x
-            INNER JOIN dbo.stations s ON s.id = x.stationId
-            WHERE x.lineId = $1
+            INNER JOIN dbo.stations s ON s.id = x.[stationId]
+            WHERE x.[lineId] = $1
               AND s.cycle_time IS NOT NULL
             ORDER BY ISNULL(s.bottleneck, 0) DESC, s.cycle_time ASC, s.id ASC
           `,

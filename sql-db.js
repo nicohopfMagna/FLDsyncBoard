@@ -1,4 +1,6 @@
 // SQL / Postgres data layer
+require('dotenv').config({ override: true });
+
 const DB_CONNECTOR = String(process.env.DB_CONNECTOR || 'mssql').trim().toLowerCase();
 const isPostgresConnector = DB_CONNECTOR === 'postgres' || DB_CONNECTOR === 'pg';
 
@@ -96,6 +98,18 @@ function translateSqlServerToPostgres(text) {
   translated = translated.replace(/\bTOP\s+(\d+)\b/gi, '__TOP__$1');
 
   translated = translated.replace(/SELECT\s+__TOP__(\d+)\s+/gi, 'SELECT ');
+
+  // Preserve camelCase aliases in PostgreSQL result keys.
+  translated = translated.replace(/\bAS\s+([A-Za-z_][A-Za-z0-9_]*)/g, (full, alias) => {
+    if (!/[A-Z]/.test(alias) || !/[a-z]/.test(alias)) return full;
+    return `AS "${alias}"`;
+  });
+
+  // SQL Server often stores booleans as BIT and uses ISNULL(..., 0).
+  // PostgreSQL uses boolean, so convert these default/coalesce patterns safely.
+  translated = translated.replace(/COALESCE\(([^)]*\b(?:bottleneck|is_last_station)\b[^)]*),\s*0\)/gi, 'COALESCE($1, false)');
+  translated = translated.replace(/COALESCE\(([^)]*\b(?:bottleneck|is_last_station)\b[^)]*),\s*false\)\s*=\s*1/gi, 'COALESCE($1, false) = true');
+  translated = translated.replace(/COALESCE\(([^)]*\b(?:bottleneck|is_last_station)\b[^)]*),\s*false\)\s*=\s*0/gi, 'COALESCE($1, false) = false');
 
   translated = translated.replace(/(ORDER\s+BY[\s\S]*?)(;|$)/gi, (match, orderClause, ending) => {
     if (!translated.includes('__TOP__')) return `${orderClause}${ending}`;
@@ -468,6 +482,74 @@ async function initDb() {
       ON dbo.shift_assignments (shift_id, target_type, target_id);
   `);
 
+  await query(`
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'IX_shifts_line_id' AND object_id = OBJECT_ID('dbo.shifts')
+    )
+    CREATE INDEX IX_shifts_line_id ON dbo.shifts (line_id);
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'IX_shifts_station_id' AND object_id = OBJECT_ID('dbo.shifts')
+    )
+    CREATE INDEX IX_shifts_station_id ON dbo.shifts (station_id);
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'IX_shift_assignments_line_id' AND object_id = OBJECT_ID('dbo.shift_assignments')
+    )
+    CREATE INDEX IX_shift_assignments_line_id ON dbo.shift_assignments (line_id);
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'IX_shift_assignments_station_id' AND object_id = OBJECT_ID('dbo.shift_assignments')
+    )
+    CREATE INDEX IX_shift_assignments_station_id ON dbo.shift_assignments (station_id);
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'IX_shift_assignments_shift_id' AND object_id = OBJECT_ID('dbo.shift_assignments')
+    )
+    CREATE INDEX IX_shift_assignments_shift_id ON dbo.shift_assignments (shift_id);
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'IX_shift_assignments_target_type_target_id_shift_id' AND object_id = OBJECT_ID('dbo.shift_assignments')
+    )
+    CREATE INDEX IX_shift_assignments_target_type_target_id_shift_id ON dbo.shift_assignments (target_type, target_id, shift_id);
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'IX_shift_assignments_shift_id_line_id_station_id' AND object_id = OBJECT_ID('dbo.shift_assignments')
+    )
+    CREATE INDEX IX_shift_assignments_shift_id_line_id_station_id ON dbo.shift_assignments (shift_id, line_id, station_id);
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'IX_shift_assignments_created_at_desc' AND object_id = OBJECT_ID('dbo.shift_assignments')
+    )
+    CREATE INDEX IX_shift_assignments_created_at_desc ON dbo.shift_assignments (created_at DESC);
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'IX_stations_bottleneck_cycle_id' AND object_id = OBJECT_ID('dbo.stations')
+    )
+    CREATE INDEX IX_stations_bottleneck_cycle_id ON dbo.stations (bottleneck, cycle_time, id);
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'IX_masterdata_templates_plant_updated' AND object_id = OBJECT_ID('dbo.masterdata_templates')
+    )
+    CREATE INDEX IX_masterdata_templates_plant_updated ON dbo.masterdata_templates (plant, updated_at DESC);
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'IX_measurements_measurement_id_desc' AND object_id = OBJECT_ID('dbo.measurements')
+    )
+    CREATE INDEX IX_measurements_measurement_id_desc ON dbo.measurements (measurement, id DESC);
+  `);
+
   await ensureReportingViews();
   await ensureSqlReportUserAccess();
 }
@@ -623,8 +705,8 @@ async function ensureSqlReportUserAccess() {
     return;
   }
 
-  const reportSqlUser = String(process.env.SQL_REPORT_USER || 'report').trim();
-  const reportSqlPassword = String(process.env.SQL_REPORT_PASSWORD || 'report');
+  const reportSqlUser = String(process.env.SQL_REPORT_USER || process.env.MSSQL_REPORT_USER || 'report').trim();
+  const reportSqlPassword = String(process.env.SQL_REPORT_PASSWORD || process.env.MSSQL_REPORT_PASSWORD || 'report');
 
   if (!reportSqlUser) {
     return;
@@ -671,10 +753,10 @@ async function ensureSqlReportUserAccess() {
       viewsGranted: views
     });
   } catch (error) {
-    dbLogger.warn('sql.report_user.provisioning.skipped', {
+    dbLogger.info('sql.report_user.provisioning.skipped', {
       user: reportSqlUser,
       reason: 'insufficient-privileges-or-policy',
-      error
+      errorMessage: error?.message || 'Unknown provisioning error'
     });
   }
 }
@@ -815,6 +897,20 @@ async function initDbPostgres() {
   await query(`
     CREATE UNIQUE INDEX IF NOT EXISTS ux_shift_assignments_business_key
       ON dbo.shift_assignments (shift_id, target_type, target_id);
+  `);
+
+  await query(`
+    CREATE INDEX IF NOT EXISTS ix_shifts_line_id ON dbo.shifts (line_id);
+    CREATE INDEX IF NOT EXISTS ix_shifts_station_id ON dbo.shifts (station_id);
+    CREATE INDEX IF NOT EXISTS ix_shift_assignments_line_id ON dbo.shift_assignments (line_id);
+    CREATE INDEX IF NOT EXISTS ix_shift_assignments_station_id ON dbo.shift_assignments (station_id);
+    CREATE INDEX IF NOT EXISTS ix_shift_assignments_shift_id ON dbo.shift_assignments (shift_id);
+    CREATE INDEX IF NOT EXISTS ix_shift_assignments_target_type_target_id_shift_id ON dbo.shift_assignments (target_type, target_id, shift_id);
+    CREATE INDEX IF NOT EXISTS ix_shift_assignments_shift_id_line_id_station_id ON dbo.shift_assignments (shift_id, line_id, station_id);
+    CREATE INDEX IF NOT EXISTS ix_shift_assignments_created_at_desc ON dbo.shift_assignments (created_at DESC);
+    CREATE INDEX IF NOT EXISTS ix_stations_bottleneck_cycle_id ON dbo.stations (bottleneck, cycle_time, id);
+    CREATE INDEX IF NOT EXISTS ix_masterdata_templates_plant_updated ON dbo.masterdata_templates (plant, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS ix_measurements_measurement_id_desc ON dbo.measurements (measurement, id DESC);
   `);
 
   await ensureReportingViewsPostgres();
@@ -1153,9 +1249,12 @@ async function writePoint(measurement, fields = {}, tags = {}) {
         );
       } catch (insertErr) {
         const message = String(insertErr?.message || '').toLowerCase();
+        const code = String(insertErr?.code || '').trim();
         const duplicate = message.includes('duplicate key')
           || message.includes('cannot insert duplicate key row')
-          || message.includes('violation of unique key constraint');
+          || message.includes('violation of unique key constraint')
+          || message.includes('doppelter schlüsselwert')
+          || code === '23505';
         if (!duplicate) {
           throw insertErr;
         }
